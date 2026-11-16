@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Station Battery</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="card" class="card">
+    <section id="main" class="view">
+      <div class="row head">
+        <span id="model" class="model"></span>
+        <span id="ago" class="muted small"></span>
+      </div>
+
+      <div id="value" class="value-block">
+        <div class="big-row">
+          <span id="soc" class="big">–</span>
+          <span id="bolt" class="bolt hidden" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/></svg>
+          </span>
+          <span id="energy" class="muted small"></span>
+        </div>
+        <div class="bar"><div id="fill" class="fill"></div></div>
+      </div>
+
+      <div id="empty" class="empty hidden">
+        <div id="emptyTitle" class="empty-title"></div>
+        <div id="emptyHint" class="muted small"></div>
+      </div>
+
+      <div id="tiles" class="tiles hidden">
+        <div class="tile"><div id="lIn" class="muted small"></div><div id="vIn" class="tile-v"></div></div>
+        <div class="tile"><div id="lOut" class="muted small"></div><div id="vOut" class="tile-v"></div></div>
+        <div class="tile"><div id="lTime" class="muted small"></div><div id="vTime" class="tile-v"></div></div>
+      </div>
+
+      <div class="row foot">
+        <span id="source" class="muted small"></span>
+        <button id="openSettings" class="icon-btn" aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.3c.4-1.8 2.9-1.8 3.4 0a1.7 1.7 0 0 0 2.6 1.1c1.5-.9 3.3.8 2.4 2.4a1.7 1.7 0 0 0 1 2.5c1.8.5 1.8 3 0 3.5a1.7 1.7 0 0 0-1 2.6c.9 1.5-.9 3.3-2.4 2.4a1.7 1.7 0 0 0-2.6 1c-.5 1.8-3 1.8-3.4 0a1.7 1.7 0 0 0-2.6-1c-1.5.9-3.3-.9-2.4-2.4a1.7 1.7 0 0 0-1-2.6c-1.8-.4-1.8-3 0-3.4a1.7 1.7 0 0 0 1-2.6c-.9-1.5.9-3.3 2.4-2.4 1 .6 2.3.1 2.6-1.1z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <section id="settingsView" class="view hidden">
+      <div class="row head">
+        <button id="back" class="icon-btn" aria-label="Back">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span id="tSettings" class="model grow"></span>
+      </div>
+
+      <div class="scroll-wrap">
+        <div id="scroll" class="scroll">
+          <h3 id="tStation"></h3>
+          <select id="deviceSelect"></select>
+          <input id="snInput" class="hidden" spellcheck="false" autocomplete="off" />
+          <p id="tSnHint" class="hint hidden"></p>
+
+          <h3 id="tSources"></h3>
+          <label class="switch-row"><span><span id="tBle"></span><small id="tBleHint"></small></span><input id="bleEnabled" type="checkbox" /></label>
+          <label class="switch-row"><span><span id="tCloud"></span><small id="tCloudHint"></small></span><input id="cloudEnabled" type="checkbox" /></label>
+          <div id="cloudBox" class="sub hidden">
+            <input id="email" type="email" autocomplete="username" spellcheck="false" />
+            <input id="password" type="password" autocomplete="current-password" />
+            <select id="region"></select>
+            <div class="row">
+              <span id="cloudStatus" class="small muted"></span>
+              <button id="signIn" class="btn"></button>
+            </div>
+          </div>
+
+          <h3 id="tNotifications"></h3>
+          <label class="switch-row"><span id="tNotifyLow"></span><input id="notifyLow" type="checkbox" /></label>
+          <div id="thresholdRow" class="row slider-row">
+            <span id="tThreshold" class="small muted"></span>
+            <input id="lowThreshold" type="range" min="5" max="50" step="5" />
+            <span id="thresholdVal" class="small"></span>
+          </div>
+          <label class="switch-row"><span id="tNotifyFull"></span><input id="notifyFull" type="checkbox" /></label>
+
+          <h3 id="tGeneral"></h3>
+          <div class="row field-row"><span id="tLanguage"></span>
+            <select id="lang" class="compact">
+              <option value="auto"></option>
+              <option value="uk">Українська</option>
+              <option value="ru">Русский</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <label class="switch-row"><span id="tAutostart"></span><input id="autostart" type="checkbox" /></label>
+
+          <div class="row end">
+            <span id="version" class="small muted"></span>
+            <button id="quit" class="btn danger"></button>
+          </div>
+        </div>
+        <div id="thumb" class="thumb"></div>
+      </div>
+    </section>
+  </div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

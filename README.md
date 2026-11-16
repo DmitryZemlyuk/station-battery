@@ -1,0 +1,60 @@
+# Station Battery
+
+A tiny tray / menu bar app for Windows and macOS that shows the charge level of an
+EcoFlow portable power station. No installer and no admin rights required.
+
+- **Bluetooth (default):** reads the battery percentage straight from the station's
+  BLE advertisement. No pairing, no account, no connection – the station only has to
+  be nearby.
+- **EcoFlow cloud (optional):** signs in with your EcoFlow app account and adds input /
+  output power and time to full / empty. Works from anywhere.
+
+UI languages: Ukrainian, Russian, English.
+
+## Supported stations
+
+| Model | Bluetooth (%) | Cloud (W, time) |
+|---|---|---|
+| River 2, River 2 Max, River 2 Pro | yes | yes |
+| Delta 2, Delta 2 Max | yes | yes |
+| River 3 | yes | – |
+| Older JSON-protocol models (River Pro/Max/Mini, Delta Max/Mini/Pro) | – | likely, enter the serial number manually |
+| Delta 3 / River 3 Plus / Delta Pro 3 and other protobuf models | – | not yet |
+
+The BLE advertisement format (manufacturer id `0xB5B5`: protocol byte, 16-byte serial,
+status byte whose low 7 bits are the charge level) was confirmed on River 2 by
+[npike/ha-ecoflow-ble](https://github.com/npike/ha-ecoflow-ble). Cloud protocol details
+come from [tolwi/hassio-ecoflow-cloud](https://github.com/tolwi/hassio-ecoflow-cloud);
+serial prefixes from [rabits/ha-ef-ble](https://github.com/rabits/ha-ef-ble).
+
+## Install
+
+**Windows:** download `StationBattery-<version>-windows-x64.exe` from Releases and run it.
+It is a single portable file. WebView2 is required (built into Windows 11 and current
+Windows 10). SmartScreen may warn because the file is unsigned: *More info → Run anyway*.
+
+**macOS:** download the `.zip`, unpack, move `Station Battery.app` anywhere (for example
+`~/Applications`). The app is unsigned, so open it the first time with right-click →
+*Open*, or run `xattr -cr "Station Battery.app"`. Allow Bluetooth access when asked.
+
+Autostart is enabled from the app settings (Windows: `HKCU\...\Run`, macOS: a user
+LaunchAgent) – no admin rights needed.
+
+## Privacy
+
+The EcoFlow password is stored in the system keychain (Windows Credential Manager /
+macOS Keychain) and is sent only to EcoFlow's own API. Settings live in the user's
+app-config folder.
+
+## Build
+
+```sh
+npx @tauri-apps/cli@2 build --no-bundle          # Windows portable exe
+npx @tauri-apps/cli@2 build --bundles app         # macOS .app
+cd src-tauri && cargo test                        # unit tests
+```
+
+CI (`.github/workflows/build.yml`) builds both on every push to `main` and attaches them
+to a GitHub release for `v*` tags.
+
+Not affiliated with EcoFlow.
