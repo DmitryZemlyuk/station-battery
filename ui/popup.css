@@ -22,13 +22,15 @@ html.win:not(.backdrop) .card {
 }
 .ring-arc.low { stroke: var(--critical); }
 .ring-arc.dim { opacity: 0.45; }
-.ring-bolt { position: absolute; left: 19px; top: 19px; color: var(--accent); }
+.ring-bolt { position: absolute; left: 18px; top: 18px; width: 20px; height: 20px; color: var(--accent); }
 .w-empty { margin-top: 12px; }
 .w-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
 .w-tile {
   background: var(--card); border: 1px solid var(--card-stroke); border-radius: 6px; padding: 7px 11px;
 }
 .w-tile .w-caption { display: flex; align-items: center; gap: 4px; }
+.cap-ico { width: 14px; height: 14px; }
+.btn-ico { width: 18px; height: 18px; }
 .w-tile-v { font-weight: 600; font-variant-numeric: tabular-nums; }
 .fly-foot { background: var(--layer); border-top: 1px solid var(--divider); padding: 6px 8px 6px 16px; min-height: 48px; }
 .w-icon-btn {
@@ -53,7 +55,7 @@ html.mac:not(.backdrop) .card { background: var(--solid-panel); border-radius: 1
 }
 .m-big-wrap { display: inline-flex; align-items: center; gap: 4px; }
 .m-big { font-size: 24px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.m-bolt { color: var(--green); }
+.m-bolt { color: var(--green); width: 15px; height: 15px; }
 .m-bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; margin-top: 8px; }
 .m-fill { height: 100%; width: 0; border-radius: 3px; background: var(--text); transition: width 0.4s ease; }
 .m-fill.charging { background: var(--green); }

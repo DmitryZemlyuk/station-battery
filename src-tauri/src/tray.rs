@@ -21,15 +21,29 @@ pub struct TrayLook {
     pub text: String,
     pub tone: Tone,
     pub fill: Option<u8>,
+    pub charging: bool,
     pub light_bar: bool,
+    /// Icon size in physical pixels. The icon is drawn at exactly the size the tray
+    /// shows it, because Windows scales a mismatched icon down into a blur.
+    pub px: u32,
 }
 
-pub fn look(s: &Snapshot, low_threshold: u8) -> TrayLook {
+/// Tray icon size for a display scale factor (Windows small icon: 16 px at 100%).
+pub fn tray_px(scale: f64) -> u32 {
+    if cfg!(windows) {
+        ((16.0 * scale).round() as u32).clamp(16, 64)
+    } else {
+        24
+    }
+}
+
+pub fn look(s: &Snapshot, low_threshold: u8, px: u32) -> TrayLook {
     let light_bar = system_uses_light_theme();
+    let charging = s.charging == Some(true);
     match s.soc {
         Some(soc) if !s.stale => TrayLook {
             text: soc.to_string(),
-            tone: if s.charging == Some(true) {
+            tone: if charging {
                 Tone::Charging
             } else if soc <= low_threshold {
                 Tone::Low
@@ -37,10 +51,12 @@ pub fn look(s: &Snapshot, low_threshold: u8) -> TrayLook {
                 Tone::Normal
             },
             fill: Some(soc),
+            charging,
             light_bar,
+            px,
         },
-        Some(soc) => TrayLook { text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), light_bar },
-        None => TrayLook { text: "–".into(), tone: Tone::Dim, fill: None, light_bar },
+        Some(soc) => TrayLook { text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, px },
+        None => TrayLook { text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, px },
     }
 }
 
@@ -72,29 +88,52 @@ fn color(l: &TrayLook) -> [u8; 3] {
     }
 }
 
-/// Windows / Linux: the number itself is the icon (32×32).
+fn hex(c: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
+}
+
+/// Rasterizes an SVG (anti-aliased) to straight-alpha RGBA at exactly `w`×`h` pixels.
+fn rasterize(svg: &str, w: u32, h: u32) -> Image<'static> {
+    use resvg::{tiny_skia, usvg};
+    let empty = || Image::new_owned(vec![0u8; (w * h * 4) as usize], w, h);
+    let Ok(tree) = usvg::Tree::from_str(svg, &usvg::Options::default()) else { return empty() };
+    let Some(mut pixmap) = tiny_skia::Pixmap::new(w, h) else { return empty() };
+    let size = tree.size();
+    let t = tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
+    resvg::render(&tree, t, &mut pixmap.as_mut());
+    let mut buf = Vec::with_capacity((w * h * 4) as usize);
+    for p in pixmap.pixels() {
+        let c = p.demultiply();
+        buf.extend_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
+    }
+    Image::new_owned(buf, w, h)
+}
+
+/// Windows / Linux: the number itself is the icon, drawn at the tray's pixel size.
 pub fn render_number(l: &TrayLook) -> Image<'static> {
-    const S: u32 = 32;
-    let mut buf = vec![0u8; (S * S * 4) as usize];
+    let s = l.px.max(8);
+    let sf32 = s as f32;
+    let mut buf = vec![0u8; (s * s * 4) as usize];
     let font = FontRef::try_from_slice(FONT).expect("font");
     let [r, g, b] = color(l);
 
-    // Pick the biggest size that fits the width.
-    let mut px = 30.0f32;
+    // The biggest size that fits the width (the font is condensed bold, so two digits
+    // still get most of the height).
     let width_at = |px: f32| {
         let sf = font.as_scaled(PxScale::from(px));
         l.text.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum::<f32>()
     };
-    while px > 10.0 && width_at(px) > (S as f32) - 1.0 {
-        px -= 0.5;
+    let mut px = sf32 * 1.02;
+    while px > 6.0 && width_at(px) > sf32 {
+        px -= 0.25;
     }
     let sf = font.as_scaled(PxScale::from(px));
     let total_w = width_at(px);
-    let ascent = sf.ascent();
-    // Digits have no descenders: centre the cap height.
+    // Digits have no descenders: centre the cap height, on a whole pixel so the
+    // horizontal strokes stay sharp.
     let cap = px * 0.73;
-    let baseline = ((S as f32) + cap) / 2.0;
-    let mut x = ((S as f32) - total_w) / 2.0;
+    let baseline = ((sf32 + cap) / 2.0).round();
+    let mut x = (sf32 - total_w) / 2.0;
 
     for ch in l.text.chars() {
         let id = sf.glyph_id(ch);
@@ -105,11 +144,12 @@ pub fn render_number(l: &TrayLook) -> Image<'static> {
             outlined.draw(|gx, gy, cov| {
                 let px_x = bb.min.x as i32 + gx as i32;
                 let px_y = bb.min.y as i32 + gy as i32;
-                if px_x < 0 || px_y < 0 || px_x >= S as i32 || px_y >= S as i32 {
+                if px_x < 0 || px_y < 0 || px_x >= s as i32 || px_y >= s as i32 {
                     return;
                 }
-                let i = ((px_y as u32 * S + px_x as u32) * 4) as usize;
-                let a = (cov.min(1.0) * 255.0) as u8;
+                let i = ((px_y as u32 * s + px_x as u32) * 4) as usize;
+                // A slight gamma lift keeps thin strokes legible at 16 px.
+                let a = (cov.clamp(0.0, 1.0).powf(0.8) * 255.0) as u8;
                 if a > buf[i + 3] {
                     buf[i] = r;
                     buf[i + 1] = g;
@@ -119,122 +159,70 @@ pub fn render_number(l: &TrayLook) -> Image<'static> {
             });
         }
     }
-    let _ = ascent;
-    Image::new_owned(buf, S, S)
+    Image::new_owned(buf, s, s)
 }
 
-/// macOS: a template battery glyph filled to the level; the number goes into the title.
-pub fn render_battery_template(fill: Option<u8>) -> Image<'static> {
-    const W: u32 = 44;
-    const H: u32 = 44;
-    let mut buf = vec![0u8; (W * H * 4) as usize];
-    let mut put = |x: u32, y: u32, a: u8| {
-        if x < W && y < H {
-            let i = ((y * W + x) * 4) as usize;
-            buf[i + 3] = buf[i + 3].max(a);
-        }
+/// Bolt used on the battery glyphs (16-unit grid, centred on the battery body).
+const BOLT: &str = "M8.6 3.2 5.2 8.4h2.1l-.9 4.4 3.9-5.6H8.1l1.3-4z";
+
+/// Windows / Linux alternative: a battery glyph in the Fluent shape, filled to the
+/// level. Drawn on a 16-unit grid so it is pixel-exact at 100% scale.
+pub fn render_battery_color(l: &TrayLook) -> Image<'static> {
+    let outline = hex(if l.light_bar { [0x1A, 0x1A, 0x1A] } else { [0xFF, 0xFF, 0xFF] });
+    let fill = match l.tone {
+        Tone::Normal | Tone::Dim => outline.clone(),
+        _ => hex(color(l)),
     };
-    // Body 4..36 x 13..31, stroke 3px, rounded-ish corners.
-    let (x0, y0, x1, y1) = (3u32, 12u32, 37u32, 32u32);
-    for y in y0..y1 {
-        for x in x0..x1 {
-            let edge = x < x0 + 3 || x >= x1 - 3 || y < y0 + 3 || y >= y1 - 3;
-            let corner = (x == x0 || x == x1 - 1) && (y == y0 || y == y1 - 1);
-            if edge && !corner {
-                put(x, y, 255);
-            }
-        }
+    let opacity = if l.tone == Tone::Dim { 0.55 } else { 1.0 };
+    let level = l.fill.map(|v| v.min(100) as f32);
+    let w = level.map(|v| if v > 0.0 { (10.0 * v / 100.0).max(1.0) } else { 0.0 }).unwrap_or(0.0);
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+<rect x="0.5" y="4.5" width="13" height="7" rx="2" fill="none" stroke="{outline}" stroke-width="1"/>
+<path d="M14.5 6.5v3" stroke="{outline}" stroke-width="1" stroke-linecap="round" fill="none"/>
+<rect x="2" y="6" width="{w}" height="4" rx="0.8" fill="{fill}" fill-opacity="{opacity}"/>"#
+    );
+    if l.charging {
+        // Knock the bolt's surroundings out of the fill, then draw it in the outline colour.
+        svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+<defs><mask id="m"><rect width="16" height="16" fill="white"/><path d="{BOLT}" fill="black" stroke="black" stroke-width="2" stroke-linejoin="round" transform="translate(0.1 0)"/></mask></defs>
+<g mask="url(#m)">
+<rect x="0.5" y="4.5" width="13" height="7" rx="2" fill="none" stroke="{outline}" stroke-width="1"/>
+<rect x="2" y="6" width="{w}" height="4" rx="0.8" fill="{fill}"/>
+</g>
+<path d="M14.5 6.5v3" stroke="{outline}" stroke-width="1" stroke-linecap="round" fill="none"/>
+<path d="{BOLT}" fill="{outline}" transform="translate(0.1 0)"/>"#
+        );
     }
-    // Terminal.
-    for y in 18..26 {
-        for x in 38..41 {
-            put(x, y, 255);
-        }
-    }
-    // Fill.
-    if let Some(level) = fill {
-        let inner_w = (x1 - 3 - 2) - (x0 + 3 + 2);
-        let w = ((inner_w as f32) * (level.min(100) as f32) / 100.0).round() as u32;
-        let w = if level > 0 { w.max(2) } else { 0 };
-        for y in (y0 + 5)..(y1 - 5) {
-            for x in (x0 + 5)..(x0 + 5 + w) {
-                put(x, y, 255);
-            }
-        }
-    }
-    Image::new_owned(buf, W, H)
+    svg.push_str("</svg>");
+    rasterize(&svg, l.px.max(8), l.px.max(8))
 }
 
-/// Windows / Linux alternative: a Fluent-style battery glyph filled to the level,
-/// with a bolt cut out while charging (32×32).
-pub fn render_battery_color(l: &TrayLook, charging: bool) -> Image<'static> {
-    const S: u32 = 32;
-    let mut buf = vec![0u8; (S * S * 4) as usize];
-    let outline = if l.light_bar { [0x1A, 0x1A, 0x1A] } else { [0xFF, 0xFF, 0xFF] };
-    let fill_c = match l.tone {
-        Tone::Normal | Tone::Dim => outline,
-        _ => color(l),
+/// macOS: a template (alpha-only) battery in the system's proportions; the number goes
+/// into the menu bar title. 27×18 pt canvas rendered at 3x, so it is sharp on any display.
+pub fn render_battery_template(fill: Option<u8>, charging: bool) -> Image<'static> {
+    let level = fill.map(|v| v.min(100) as f32);
+    let w = level.map(|v| if v > 0.0 { (17.0 * v / 100.0).max(2.0) } else { 0.0 }).unwrap_or(0.0);
+    let body = r#"<rect x="1.5" y="3.5" width="22" height="11" rx="3.4" fill="none" stroke="black" stroke-opacity="0.55" stroke-width="1"/>
+<path d="M25 7.2v3.6c.9-.3 1.5-1 1.5-1.8s-.6-1.5-1.5-1.8z" fill="black" fill-opacity="0.55"/>"#;
+    let svg = if charging {
+        // Bolt on a 16-unit grid, moved to the centre of the 22×11 body.
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 27 18" width="27" height="18">
+<defs><mask id="m"><rect width="27" height="18" fill="white"/><path d="{BOLT}" fill="black" stroke="black" stroke-width="2.2" stroke-linejoin="round" transform="translate(5.1 1)"/></mask></defs>
+<g mask="url(#m)">{body}<rect x="4" y="6" width="{w}" height="6" rx="1.6" fill="black"/></g>
+<path d="{BOLT}" fill="black" transform="translate(5.1 1)"/>
+</svg>"#
+        )
+    } else {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 27 18" width="27" height="18">
+{body}<rect x="4" y="6" width="{w}" height="6" rx="1.6" fill="black"/>
+</svg>"#
+        )
     };
-    let mut put = |x: i32, y: i32, c: [u8; 3], a: u8| {
-        if x >= 0 && y >= 0 && (x as u32) < S && (y as u32) < S {
-            let i = ((y as u32 * S + x as u32) * 4) as usize;
-            buf[i] = c[0];
-            buf[i + 1] = c[1];
-            buf[i + 2] = c[2];
-            buf[i + 3] = a;
-        }
-    };
-    // Body 2..27 x 8..24, 2 px stroke, rounded corners (Fluent battery shape).
-    let (x0, y0, x1, y1) = (2, 8, 27, 24);
-    for y in y0..y1 {
-        for x in x0..x1 {
-            let edge = x < x0 + 2 || x >= x1 - 2 || y < y0 + 2 || y >= y1 - 2;
-            let corner = (x == x0 || x == x1 - 1) && (y == y0 || y == y1 - 1);
-            if edge && !corner {
-                put(x, y, outline, 255);
-            }
-        }
-    }
-    for y in 13..19 {
-        for x in 28..30 {
-            put(x, y, outline, 255);
-        }
-    }
-    let inner_w = (x1 - 3) - (x0 + 3);
-    if let Some(level) = l.fill {
-        let w = ((inner_w as f32) * (level.min(100) as f32) / 100.0).round() as i32;
-        let w = if level > 0 { w.max(2) } else { 0 };
-        let a = if l.tone == Tone::Dim { 150 } else { 255 };
-        for y in (y0 + 3)..(y1 - 3) {
-            for x in (x0 + 3)..(x0 + 3 + w) {
-                put(x, y, fill_c, a);
-            }
-        }
-    }
-    if charging {
-        // Bolt, drawn transparent with an outline-coloured edge so it reads on any fill.
-        let bolt = [(16, 9), (10, 17), (14, 17), (12, 23), (19, 14), (15, 14), (17, 9)];
-        let inside = |px: f32, py: f32| {
-            let mut c = false;
-            let n = bolt.len();
-            for i in 0..n {
-                let (xi, yi) = (bolt[i].0 as f32, bolt[i].1 as f32);
-                let (xj, yj) = (bolt[(i + n - 1) % n].0 as f32, bolt[(i + n - 1) % n].1 as f32);
-                if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
-                    c = !c;
-                }
-            }
-            c
-        };
-        for y in 6..26 {
-            for x in 6..22 {
-                if inside(x as f32 + 0.5, y as f32 + 0.5) {
-                    put(x, y, color(&TrayLook { tone: Tone::Charging, ..l.clone() }), 255);
-                }
-            }
-        }
-    }
-    Image::new_owned(buf, S, S)
+    rasterize(&svg, 81, 54)
 }
 
 pub fn tooltip(s: &Snapshot, lang: &str) -> String {
@@ -403,5 +391,52 @@ mod tests {
         assert!(a.bottom);
         assert!(a.x >= 1920 + 8 && a.x + 300 <= 1920 + 2560 - 8);
         assert_eq!(a.y_for(140) + 140, 1196);
+    }
+
+    #[test]
+    fn icons_have_the_requested_size_and_content() {
+        for px in [16u32, 20, 24, 32] {
+            let l = TrayLook { text: "78".into(), tone: Tone::Normal, fill: Some(78), charging: false, light_bar: false, px };
+            for img in [render_number(&l), render_battery_color(&l)] {
+                assert_eq!((img.width(), img.height()), (px, px));
+                assert!(img.rgba().chunks(4).filter(|p| p[3] > 128).count() > (px * px / 12) as usize);
+            }
+        }
+        let t = render_battery_template(Some(50), true);
+        assert_eq!((t.width(), t.height()), (81, 54));
+        assert!(t.rgba().chunks(4).any(|p| p[3] > 200));
+        assert_eq!(tray_px(1.0), if cfg!(windows) { 16 } else { 24 });
+    }
+
+    /// Dumps the tray icons for a visual check: SB_ICON_DIR=/tmp/icons cargo test -- --ignored dump_icons
+    #[test]
+    #[ignore]
+    fn dump_icons() {
+        let Ok(dir) = std::env::var("SB_ICON_DIR") else { return };
+        let mut n = 0;
+        for px in [16u32, 20, 24, 32] {
+            for light_bar in [false, true] {
+                for (text, tone, fill, charging) in [
+                    ("78", Tone::Normal, Some(78u8), false),
+                    ("78", Tone::Charging, Some(78), true),
+                    ("14", Tone::Low, Some(14), false),
+                    ("100", Tone::Charging, Some(100), true),
+                    ("5", Tone::Charging, Some(5), true),
+                    ("–", Tone::Dim, None, false),
+                ] {
+                    let l = TrayLook { text: text.into(), tone, fill, charging, light_bar, px };
+                    for (kind, img) in [("num", render_number(&l)), ("bat", render_battery_color(&l))] {
+                        let theme = if light_bar { "light" } else { "dark" };
+                        let path = format!("{dir}/{px:02}-{theme}-{n:03}-{kind}-{}x{}.rgba", img.width(), img.height());
+                        std::fs::write(path, img.rgba()).unwrap();
+                    }
+                    n += 1;
+                }
+            }
+        }
+        for (i, (fill, ch)) in [(Some(78u8), false), (Some(78), true), (Some(14), false), (Some(100), true), (None, false)].iter().enumerate() {
+            let t = render_battery_template(*fill, *ch);
+            std::fs::write(format!("{dir}/mac-{i}-{}x{}.rgba", t.width(), t.height()), t.rgba()).unwrap();
+        }
     }
 }

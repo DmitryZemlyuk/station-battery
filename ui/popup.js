@@ -146,6 +146,7 @@
 
   function apply(s) {
     snap = s;
+    if (s.lowThreshold != null) lowThreshold = s.lowThreshold;
     SB.setLang(s.lang);
     render();
   }
@@ -171,18 +172,15 @@
   await SB.initPlatform();
 
   listen("snapshot", (e) => apply(e.payload));
-  listen("settings-changed", (e) => {
-    lowThreshold = e.payload.settings.lowThreshold;
-    render();
-  });
   listen("popup-shown", async () => {
-    const [s, sv] = await Promise.all([invoke("get_snapshot"), invoke("get_settings")]);
-    lowThreshold = sv.settings.lowThreshold;
-    apply(s);
+    // Start the slide-in right away, then refresh the data.
     const card = $("card");
     card.classList.remove("enter");
     void card.offsetWidth; // restart the animation
     card.classList.add("enter");
+    resize(true);
+    SB.initPlatform(); // picks up a changed Windows accent colour
+    apply(await invoke("get_snapshot"));
     resize(true);
   });
 
@@ -192,7 +190,6 @@
     invoke("get_snapshot").then(apply).catch(() => {});
   }, 5000);
 
-  const sv = await invoke("get_settings");
-  lowThreshold = sv.settings.lowThreshold;
+  // The snapshot carries everything the popup needs (no settings / keychain lookups).
   apply(await invoke("get_snapshot"));
 })();

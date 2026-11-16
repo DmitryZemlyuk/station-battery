@@ -47,7 +47,7 @@ struct SettingsView {
 fn settings_view<R: Runtime>(app: &AppHandle<R>, core: &Shared) -> SettingsView {
     let s = core.settings();
     SettingsView {
-        has_password: settings::get_password(&s.cloud_email).is_some(),
+        has_password: core.has_password(&s.cloud_email),
         settings: s,
         version: app.package_info().version.to_string(),
         platform: std::env::consts::OS.to_string(),
@@ -67,9 +67,13 @@ fn open_settings(app: AppHandle) {
     open_settings_window(&app);
 }
 
+/// Always creates the window from its own thread: on Windows, building a webview window
+/// inside a synchronous command or an event handler (tray menu, single-instance callback)
+/// deadlocks the main thread.
 fn open_settings_window<R: Runtime>(app: &AppHandle<R>) {
     let lang = app.state::<AppState>().core.settings().resolved_lang();
-    platform::open_settings(app, i18n::get(lang).settings_title);
+    let app = app.clone();
+    std::thread::spawn(move || platform::open_settings(&app, i18n::get(lang).settings_title));
 }
 
 /// The settings page calls this once it has rendered, so the window never flashes empty.
@@ -118,6 +122,7 @@ fn save_settings(
             return Err("email".into());
         }
         settings::set_password(&settings.cloud_email, &p)?;
+        core.set_has_password(&settings.cloud_email, true);
         password_changed = true;
     }
     if !old.cloud_email.is_empty() && old.cloud_email != settings.cloud_email {
@@ -224,11 +229,12 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<Menu<
 fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Snapshot) {
     let state = app.state::<AppState>();
     let low = state.core.settings().low_threshold;
-    let look = tray::look(snap, low);
+    let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
+    let look = tray::look(snap, low, tray::tray_px(scale));
     let mut last = state.last_look.lock().unwrap();
     if last.as_ref() != Some(&look) {
         if cfg!(target_os = "macos") {
-            let _ = tray_icon.set_icon(Some(tray::render_battery_template(look.fill)));
+            let _ = tray_icon.set_icon(Some(tray::render_battery_template(look.fill, look.charging)));
             let _ = tray_icon.set_icon_as_template(true);
             let title = match snap.soc {
                 Some(soc) => format!("{soc}%"),
@@ -236,7 +242,7 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
             };
             let _ = tray_icon.set_title(Some(title));
         } else if state.core.settings().tray_style == "battery" {
-            let _ = tray_icon.set_icon(Some(tray::render_battery_color(&look, snap.charging == Some(true))));
+            let _ = tray_icon.set_icon(Some(tray::render_battery_color(&look)));
         } else {
             let _ = tray_icon.set_icon(Some(tray::render_number(&look)));
         }
@@ -328,11 +334,12 @@ fn main() {
             });
 
             let snap = core.snapshot();
-            let look = tray::look(&snap, core.settings().low_threshold);
+            let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
+            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale));
             let icon = if cfg!(target_os = "macos") {
-                tray::render_battery_template(None)
+                tray::render_battery_template(None, false)
             } else if core.settings().tray_style == "battery" {
-                tray::render_battery_color(&look, false)
+                tray::render_battery_color(&look)
             } else {
                 tray::render_number(&look)
             };

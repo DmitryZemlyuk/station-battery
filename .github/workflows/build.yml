@@ -97,3 +97,13 @@ jobs:
           body: |
             Windows: portable `.exe`, no installer or admin rights needed.
             macOS: unpack the `.zip`; first launch via right-click → Open (unsigned app).
+      - name: Keep only the three newest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
+            | sort -V -r | tail -n +4 \
+            | while read -r tag; do
+                echo "Deleting old release $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              done

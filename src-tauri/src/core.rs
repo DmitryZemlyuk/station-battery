@@ -60,6 +60,9 @@ pub struct Core {
     pub ble: Mutex<BleState>,
     pub cloud: Mutex<CloudState>,
     pub notify: Mutex<NotifyState>,
+    /// (email, has a stored password). Reading the system keychain can show a prompt on
+    /// macOS, so the answer is remembered instead of being looked up for every UI refresh.
+    pub password_known: Mutex<Option<(String, bool)>>,
     pub ble_restart: Notify,
     pub cloud_restart: Notify,
     pub changed: Notify,
@@ -98,6 +101,7 @@ pub struct Snapshot {
     pub cloud_message: String,
     pub devices: Vec<DeviceItem>,
     pub capacity_wh: Option<u32>,
+    pub low_threshold: u8,
 }
 
 fn num(params: &HashMap<String, Value>, keys: &[&str]) -> Option<f64> {
@@ -159,6 +163,7 @@ impl Core {
             ble: Mutex::new(BleState { status: "starting".into(), ..Default::default() }),
             cloud: Mutex::new(CloudState { status: "off".into(), ..Default::default() }),
             notify: Mutex::new(NotifyState::default()),
+            password_known: Mutex::new(None),
             ble_restart: Notify::new(),
             cloud_restart: Notify::new(),
             changed: Notify::new(),
@@ -167,6 +172,24 @@ impl Core {
 
     pub fn settings(&self) -> Settings {
         self.settings.read().unwrap().clone()
+    }
+
+    pub fn has_password(&self, email: &str) -> bool {
+        if email.is_empty() {
+            return false;
+        }
+        if let Some((e, has)) = self.password_known.lock().unwrap().as_ref() {
+            if e == email {
+                return *has;
+            }
+        }
+        let has = crate::settings::get_password(email).is_some();
+        self.set_has_password(email, has);
+        has
+    }
+
+    pub fn set_has_password(&self, email: &str, has: bool) {
+        *self.password_known.lock().unwrap() = Some((email.to_string(), has));
     }
 
     pub fn mark_changed(&self) {
@@ -228,6 +251,7 @@ impl Core {
             lang: settings.resolved_lang().to_string(),
             model: if sn.is_empty() { String::new() } else { models::name(&sn) },
             capacity_wh: capacity_wh(&sn),
+            low_threshold: settings.low_threshold,
             sn: sn.clone(),
             ..Default::default()
         };

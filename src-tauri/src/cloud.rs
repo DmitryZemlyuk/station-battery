@@ -178,6 +178,9 @@ pub async fn run(core: Shared) {
             continue;
         }
         let password = settings::get_password(&s.cloud_email);
+        if !s.cloud_email.is_empty() {
+            core.set_has_password(&s.cloud_email, password.is_some());
+        }
         if s.cloud_email.is_empty() || password.is_none() {
             set(&core, "no_login", "");
             core.cloud_restart.notified().await;

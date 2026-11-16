@@ -60,3 +60,4 @@ html.win .desc.ok { color: var(--success); }
 html.win .desc.err { color: var(--critical); }
 html.mac .desc.ok { color: var(--green); }
 html.mac .desc.err { color: var(--red); }
+.tab-ico { width: 22px; height: 22px; }

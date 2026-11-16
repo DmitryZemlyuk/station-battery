@@ -132,6 +132,12 @@ pub fn open_settings<R: Runtime>(app: &AppHandle<R>, title: &str) {
         Ok(w) => {
             let _ = w.center();
             // The page shows the window once it has laid itself out (no white flash).
+            // Safety net: if the page never asks (script error, slow start), show it anyway.
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            if !w.is_visible().unwrap_or(true) {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
         }
         Err(e) => {
             eprintln!("settings window: {e}");

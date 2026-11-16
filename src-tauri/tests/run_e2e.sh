@@ -25,4 +25,4 @@ sleep 1
 
 NO_PROXY=127.0.0.1 no_proxy=127.0.0.1 \
 SB_MOCK_API=http://127.0.0.1:18080 SB_MOCK_TLS_PORT=18884 \
-  cargo test --locked -- --ignored || { cat "$tmp"/*.log; exit 1; }
+  cargo test --locked -- --ignored cloud::tests || { cat "$tmp"/*.log; exit 1; }

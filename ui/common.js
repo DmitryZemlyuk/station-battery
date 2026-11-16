@@ -24,10 +24,23 @@ window.SB = (() => {
     if (p.backdrop) root.classList.add("backdrop");
     if (p.accentOnLight) root.style.setProperty("--accent-on-light", p.accentOnLight);
     if (p.accentOnDark) root.style.setProperty("--accent-on-dark", p.accentOnDark);
+    applyIcons();
     return p;
   }
 
   const isMac = () => document.documentElement.classList.contains("mac");
+
+  /** Fills every [data-ico] with the icon of the current platform's icon set. */
+  function applyIcons() {
+    const set = (window.SB_ICONS || {})[isMac() ? "mac" : "win"] || {};
+    document.querySelectorAll("[data-ico]").forEach((el) => {
+      const svg = set[el.dataset.ico];
+      if (svg && el.dataset.icoDone !== "1") {
+        el.innerHTML = svg;
+        el.dataset.icoDone = "1";
+      }
+    });
+  }
 
   function fmtMinutes(m) {
     const L = t();
