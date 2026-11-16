@@ -1,0 +1,193 @@
+/* Platform tokens. html gets .win | .mac (Linux uses the Windows look) and .backdrop
+   when a system material (Acrylic / Mica / vibrancy) is behind the page. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: transparent; }
+body {
+  color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+.hidden { display: none !important; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Elements of the other platform are removed; own-platform ones keep their normal display.
+   (Until the platform class is set, both are hidden to avoid a flash.) */
+html:not(.win):not(.mac) .mac-only, html:not(.win):not(.mac) .win-only,
+html.win .mac-only, html.mac .win-only { display: none !important; }
+
+/* ---------- Windows 11 (Fluent) ---------- */
+html.win {
+  font: 14px/20px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --accent: var(--accent-on-light, #005fb8);
+  --on-accent: #ffffff;
+  --text: rgba(0, 0, 0, 0.894);
+  --text2: rgba(0, 0, 0, 0.62);
+  --text3: rgba(0, 0, 0, 0.447);
+  --card: rgba(255, 255, 255, 0.7);
+  --card-stroke: rgba(0, 0, 0, 0.0578);
+  --subtle-hover: rgba(0, 0, 0, 0.0373);
+  --subtle-press: rgba(0, 0, 0, 0.0241);
+  --ctrl: rgba(255, 255, 255, 0.7);
+  --ctrl-hover: rgba(249, 249, 249, 0.5);
+  --ctrl-stroke: rgba(0, 0, 0, 0.0578);
+  --ctrl-stroke-bottom: rgba(0, 0, 0, 0.1622);
+  --ctrl-strong: rgba(0, 0, 0, 0.6063);
+  --layer: rgba(0, 0, 0, 0.03);
+  --divider: rgba(0, 0, 0, 0.0803);
+  --track: rgba(0, 0, 0, 0.0578);
+  --critical: #c42b1c;
+  --success: #0f7b0f;
+  --solid: #f3f3f3;
+  --solid-flyout: #fcfcfc;
+}
+@media (prefers-color-scheme: dark) {
+  html.win {
+    --accent: var(--accent-on-dark, #60cdff);
+    --on-accent: #000000;
+    --text: #ffffff;
+    --text2: rgba(255, 255, 255, 0.786);
+    --text3: rgba(255, 255, 255, 0.545);
+    --card: rgba(255, 255, 255, 0.0512);
+    --card-stroke: rgba(0, 0, 0, 0.1);
+    --subtle-hover: rgba(255, 255, 255, 0.0605);
+    --subtle-press: rgba(255, 255, 255, 0.0419);
+    --ctrl: rgba(255, 255, 255, 0.0605);
+    --ctrl-hover: rgba(255, 255, 255, 0.0837);
+    --ctrl-stroke: rgba(255, 255, 255, 0.0698);
+    --ctrl-stroke-bottom: rgba(255, 255, 255, 0.0931);
+    --ctrl-strong: rgba(255, 255, 255, 0.5442);
+    --layer: rgba(0, 0, 0, 0.12);
+    --divider: rgba(255, 255, 255, 0.0837);
+    --track: rgba(255, 255, 255, 0.0698);
+    --critical: #ff99a4;
+    --success: #6ccb5f;
+    --solid: #202020;
+    --solid-flyout: #2c2c2c;
+  }
+}
+
+/* Fluent toggle switch */
+html.win input[type="checkbox"].toggle {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none; cursor: pointer;
+  width: 40px; height: 20px; border-radius: 10px; position: relative;
+  border: 1px solid var(--ctrl-strong); background: transparent;
+  transition: background 0.15s;
+}
+html.win input[type="checkbox"].toggle::after {
+  content: ""; position: absolute; left: 3px; top: 3px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--ctrl-strong); transition: transform 0.15s cubic-bezier(0.5, 0, 0, 1), width 0.1s;
+}
+html.win input[type="checkbox"].toggle:hover::after { width: 14px; height: 14px; top: 2px; left: 2px; }
+html.win input[type="checkbox"].toggle:checked { background: var(--accent); border-color: var(--accent); }
+html.win input[type="checkbox"].toggle:checked::after { background: var(--on-accent); transform: translateX(20px); }
+html.win input[type="checkbox"].toggle:checked:hover::after { transform: translateX(18px); }
+html.win .toggle-wrap { display: inline-flex; align-items: center; gap: 12px; }
+html.win .toggle-wrap .state { color: var(--text); min-width: 44px; text-align: right; }
+
+/* Fluent ComboBox / TextBox / buttons */
+html.win select, html.win input.text {
+  font: inherit; color: var(--text); height: 32px; border-radius: 4px; outline: none;
+  background: var(--ctrl); border: 1px solid var(--ctrl-stroke); border-bottom-color: var(--ctrl-stroke-bottom);
+  padding: 0 11px;
+}
+html.win select {
+  appearance: none; -webkit-appearance: none; padding-right: 34px; min-width: 160px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%23888' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center;
+}
+html.win select option { background: var(--solid); color: var(--text); }
+html.win select:hover, html.win input.text:hover { background-color: var(--ctrl-hover); }
+html.win input.text { user-select: text; -webkit-user-select: text; }
+html.win input.text:focus { border-bottom: 2px solid var(--accent); padding-bottom: 0; }
+html.win input.text::placeholder { color: var(--text3); }
+html.win button.btn {
+  font: inherit; height: 32px; padding: 0 12px; border-radius: 4px; cursor: pointer; color: var(--text);
+  background: var(--ctrl); border: 1px solid var(--ctrl-stroke); border-bottom-color: var(--ctrl-stroke-bottom);
+}
+html.win button.btn:hover { background: var(--ctrl-hover); }
+html.win button.btn.accent { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+html.win button.btn.accent:hover { filter: brightness(1.08); }
+
+/* Fluent slider */
+html.win input[type="range"] { -webkit-appearance: none; appearance: none; background: transparent; height: 20px; margin: 0; }
+html.win input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--ctrl-strong); }
+html.win input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%;
+  background: var(--solid-flyout); box-shadow: 0 0 0 1px var(--ctrl-stroke), inset 0 0 0 5px var(--solid-flyout), inset 0 0 0 20px var(--accent);
+}
+html.win input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 0 0 1px var(--ctrl-stroke), inset 0 0 0 4px var(--solid-flyout), inset 0 0 0 20px var(--accent); }
+
+/* ---------- macOS ---------- */
+html.mac {
+  font: 13px/16px -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --accent: #007aff;
+  --text: rgba(0, 0, 0, 0.85);
+  --text2: rgba(0, 0, 0, 0.5);
+  --text3: rgba(0, 0, 0, 0.26);
+  --group: rgba(255, 255, 255, 0.55);
+  --group-stroke: rgba(0, 0, 0, 0.05);
+  --form: rgba(0, 0, 0, 0.03);
+  --form-stroke: rgba(0, 0, 0, 0.06);
+  --separator: rgba(0, 0, 0, 0.1);
+  --track: rgba(0, 0, 0, 0.1);
+  --green: #34c759;
+  --red: #ff3b30;
+  --solid: #ececec;
+  --solid-panel: #f6f6f6;
+}
+@supports (color: -apple-system-control-accent) {
+  html.mac { --accent: -apple-system-control-accent; }
+}
+@media (prefers-color-scheme: dark) {
+  html.mac {
+    --text: rgba(255, 255, 255, 0.85);
+    --text2: rgba(255, 255, 255, 0.55);
+    --text3: rgba(255, 255, 255, 0.25);
+    --group: rgba(255, 255, 255, 0.07);
+    --group-stroke: rgba(255, 255, 255, 0.05);
+    --form: rgba(255, 255, 255, 0.05);
+    --form-stroke: rgba(255, 255, 255, 0.06);
+    --separator: rgba(255, 255, 255, 0.1);
+    --track: rgba(255, 255, 255, 0.15);
+    --green: #30d158;
+    --red: #ff453a;
+    --solid: #2a2a2a;
+    --solid-panel: #2c2c2e;
+  }
+}
+@supports not (color: -apple-system-control-accent) {
+  @media (prefers-color-scheme: dark) { html.mac { --accent: #0a84ff; } }
+}
+
+/* macOS small switch (as in System Settings) */
+html.mac input[type="checkbox"].toggle {
+  appearance: none; -webkit-appearance: none; margin: 0; flex: none; cursor: default;
+  width: 26px; height: 15px; border-radius: 8px; position: relative; background: var(--track);
+  transition: background 0.2s;
+}
+html.mac input[type="checkbox"].toggle::after {
+  content: ""; position: absolute; left: 1.5px; top: 1.5px; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.3); transition: transform 0.2s;
+}
+html.mac input[type="checkbox"].toggle:checked { background: var(--accent); }
+html.mac input[type="checkbox"].toggle:checked::after { transform: translateX(11px); }
+html.mac .toggle-wrap .state { display: none; }
+html.mac select { font: inherit; }
+html.mac input.text {
+  font: inherit; color: var(--text); height: 22px; padding: 0 6px; border-radius: 5px; outline: none;
+  border: 0.5px solid var(--separator); background: var(--form); text-align: right; min-width: 200px;
+  user-select: text; -webkit-user-select: text;
+}
+html.mac input.text:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); border-color: transparent; }
+html.mac button.btn { font: inherit; }
+html.mac input[type="range"] { accent-color: var(--accent); }
+
+/* Overlay scrollbar: appears while scrolling, then fades out. */
+.scroll { overflow-y: auto; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+.thumb {
+  position: fixed; right: 3px; top: 0; width: 4px; border-radius: 2px; background: var(--text2);
+  opacity: 0; transition: opacity 0.35s; pointer-events: none; z-index: 10;
+}
+.thumb.show { opacity: 0.6; transition: opacity 0.1s; }

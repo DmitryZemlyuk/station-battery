@@ -9,6 +9,16 @@ EcoFlow portable power station. No installer and no admin rights required.
 - **EcoFlow cloud (optional):** signs in with your EcoFlow app account and adds input /
   output power and time to full / empty. Works from anywhere.
 
+Each platform gets its native look:
+
+- **Windows 11:** a Fluent flyout above the tray (system Acrylic, your accent colour) and
+  a settings window styled like Windows Settings (Mica). On Windows 10 / early 11 the same
+  layout uses an opaque surface. The tray icon can show the percentage or a battery glyph.
+- **macOS:** a Control Center–style panel under the menu bar (vibrancy) with
+  *Settings… ⌘,* and *Quit ⌘Q*, and a Settings window with toolbar tabs.
+
+`station-battery --settings` opens the settings window directly.
+
 UI languages: Ukrainian, Russian, English.
 
 ## Supported stations

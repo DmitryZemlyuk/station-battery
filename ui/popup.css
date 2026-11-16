@@ -1,0 +1,71 @@
+html, body { overflow: hidden; }
+.card { overflow: hidden; }
+
+/* ---------- Windows flyout ---------- */
+html.win .card { width: 320px; }
+/* Without a system material (Windows 10, older 11): an opaque Fluent surface. */
+html.win:not(.backdrop) .card {
+  background: var(--solid-flyout); border: 1px solid var(--ctrl-stroke); border-radius: 8px;
+}
+.fly-body { padding: 16px 16px 14px; }
+.w-title { font-size: 14px; line-height: 20px; font-weight: 600; }
+.w-subtitle { font-size: 14px; line-height: 20px; font-weight: 600; margin-bottom: 2px; }
+.w-caption { font-size: 12px; line-height: 16px; color: var(--text2); }
+.w-display { font: 600 28px/36px "Segoe UI Variable Display", "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+.ring-row { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
+.ring { position: relative; width: 56px; height: 56px; flex: none; }
+.ring svg { display: block; }
+.ring-track { fill: none; stroke: var(--track); stroke-width: 5; }
+.ring-arc {
+  fill: none; stroke: var(--accent); stroke-width: 5; stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: 28px 28px; transition: stroke-dashoffset 0.5s cubic-bezier(0, 0, 0, 1), stroke 0.2s;
+}
+.ring-arc.low { stroke: var(--critical); }
+.ring-arc.dim { opacity: 0.45; }
+.ring-bolt { position: absolute; left: 19px; top: 19px; color: var(--accent); }
+.w-empty { margin-top: 12px; }
+.w-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.w-tile {
+  background: var(--card); border: 1px solid var(--card-stroke); border-radius: 6px; padding: 7px 11px;
+}
+.w-tile .w-caption { display: flex; align-items: center; gap: 4px; }
+.w-tile-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fly-foot { background: var(--layer); border-top: 1px solid var(--divider); padding: 6px 8px 6px 16px; min-height: 48px; }
+.w-icon-btn {
+  width: 36px; height: 36px; border: 0; border-radius: 4px; background: transparent; color: var(--text);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.w-icon-btn:hover { background: var(--subtle-hover); }
+.w-icon-btn:active { background: var(--subtle-press); color: var(--text2); }
+/* System flyouts slide in from the taskbar. */
+html.win .card.enter .fly { animation: fly-in 0.25s cubic-bezier(0, 0, 0, 1); }
+@keyframes fly-in { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------- macOS panel ---------- */
+html.mac .card { width: 300px; padding: 10px; }
+html.mac:not(.backdrop) .card { background: var(--solid-panel); border-radius: 12px; }
+.m-head { padding: 2px 4px 8px; }
+.m-title { font-weight: 600; }
+.m-caption { color: var(--text2); font-size: 12px; line-height: 15px; }
+.m-group {
+  background: var(--group); border: 0.5px solid var(--group-stroke); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.m-big-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.m-big { font-size: 24px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.m-bolt { color: var(--green); }
+.m-bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; margin-top: 8px; }
+.m-fill { height: 100%; width: 0; border-radius: 3px; background: var(--text); transition: width 0.4s ease; }
+.m-fill.charging { background: var(--green); }
+.m-fill.low { background: var(--red); }
+.m-fill.dim { opacity: 0.4; }
+.m-status { margin-top: 6px; }
+.m-empty-title { font-weight: 600; margin-bottom: 3px; }
+.m-rows { padding: 6px 12px; }
+.m-rows .row { padding: 3px 0; font-variant-numeric: tabular-nums; }
+.m-menu { margin: 0 -10px -10px; padding: 0 5px 5px; }
+.m-sep { height: 0.5px; background: var(--separator); margin: 2px 9px 5px; }
+.m-item { padding: 3px 9px; border-radius: 4px; cursor: default; line-height: 16px; }
+.m-kbd { color: var(--text2); }
+.m-item:hover { background: var(--accent); color: #fff; }
+.m-item:hover .m-kbd { color: rgba(255, 255, 255, 0.75); }

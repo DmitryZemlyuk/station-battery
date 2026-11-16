@@ -165,6 +165,78 @@ pub fn render_battery_template(fill: Option<u8>) -> Image<'static> {
     Image::new_owned(buf, W, H)
 }
 
+/// Windows / Linux alternative: a Fluent-style battery glyph filled to the level,
+/// with a bolt cut out while charging (32×32).
+pub fn render_battery_color(l: &TrayLook, charging: bool) -> Image<'static> {
+    const S: u32 = 32;
+    let mut buf = vec![0u8; (S * S * 4) as usize];
+    let outline = if l.light_bar { [0x1A, 0x1A, 0x1A] } else { [0xFF, 0xFF, 0xFF] };
+    let fill_c = match l.tone {
+        Tone::Normal | Tone::Dim => outline,
+        _ => color(l),
+    };
+    let mut put = |x: i32, y: i32, c: [u8; 3], a: u8| {
+        if x >= 0 && y >= 0 && (x as u32) < S && (y as u32) < S {
+            let i = ((y as u32 * S + x as u32) * 4) as usize;
+            buf[i] = c[0];
+            buf[i + 1] = c[1];
+            buf[i + 2] = c[2];
+            buf[i + 3] = a;
+        }
+    };
+    // Body 2..27 x 8..24, 2 px stroke, rounded corners (Fluent battery shape).
+    let (x0, y0, x1, y1) = (2, 8, 27, 24);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let edge = x < x0 + 2 || x >= x1 - 2 || y < y0 + 2 || y >= y1 - 2;
+            let corner = (x == x0 || x == x1 - 1) && (y == y0 || y == y1 - 1);
+            if edge && !corner {
+                put(x, y, outline, 255);
+            }
+        }
+    }
+    for y in 13..19 {
+        for x in 28..30 {
+            put(x, y, outline, 255);
+        }
+    }
+    let inner_w = (x1 - 3) - (x0 + 3);
+    if let Some(level) = l.fill {
+        let w = ((inner_w as f32) * (level.min(100) as f32) / 100.0).round() as i32;
+        let w = if level > 0 { w.max(2) } else { 0 };
+        let a = if l.tone == Tone::Dim { 150 } else { 255 };
+        for y in (y0 + 3)..(y1 - 3) {
+            for x in (x0 + 3)..(x0 + 3 + w) {
+                put(x, y, fill_c, a);
+            }
+        }
+    }
+    if charging {
+        // Bolt, drawn transparent with an outline-coloured edge so it reads on any fill.
+        let bolt = [(16, 9), (10, 17), (14, 17), (12, 23), (19, 14), (15, 14), (17, 9)];
+        let inside = |px: f32, py: f32| {
+            let mut c = false;
+            let n = bolt.len();
+            for i in 0..n {
+                let (xi, yi) = (bolt[i].0 as f32, bolt[i].1 as f32);
+                let (xj, yj) = (bolt[(i + n - 1) % n].0 as f32, bolt[(i + n - 1) % n].1 as f32);
+                if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
+                    c = !c;
+                }
+            }
+            c
+        };
+        for y in 6..26 {
+            for x in 6..22 {
+                if inside(x as f32 + 0.5, y as f32 + 0.5) {
+                    put(x, y, color(&TrayLook { tone: Tone::Charging, ..l.clone() }), 255);
+                }
+            }
+        }
+    }
+    Image::new_owned(buf, S, S)
+}
+
 pub fn tooltip(s: &Snapshot, lang: &str) -> String {
     let t = i18n::get(lang);
     let name = if s.model.is_empty() { "EcoFlow".to_string() } else { s.model.clone() };
@@ -233,8 +305,15 @@ pub fn compute_anchor(icon: Option<(f64, f64, f64, f64)>, mon: (i32, i32, i32, i
     }
 }
 
-/// Popup width in logical pixels (matches the card width in ui/style.css).
-pub const POPUP_WIDTH: f64 = 300.0;
+/// Popup width in logical pixels (matches the card width in ui/popup.css).
+pub fn popup_width() -> f64 {
+    // Linux (development only) uses the Windows look.
+    if cfg!(target_os = "macos") {
+        300.0
+    } else {
+        320.0
+    }
+}
 
 /// Place the popup next to the tray icon, inside the monitor that holds it.
 /// `height` is the popup's current logical height. Sizes are computed from known
@@ -264,7 +343,7 @@ pub fn place_popup<R: Runtime>(win: &WebviewWindow<R>, tray_rect: Option<Rect>, 
     let mon = (mp.x, mp.y, mp.x + ms.width as i32, mp.y + ms.height as i32);
     // The popup takes the scale of the monitor it is shown on.
     let scale = monitor.scale_factor();
-    let w = (POPUP_WIDTH * scale).round() as i32;
+    let w = (popup_width() * scale).round() as i32;
     let h = (height * scale).round() as i32;
     let margin = (8.0 * scale).round() as i32;
 

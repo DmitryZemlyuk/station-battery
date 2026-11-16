@@ -1,0 +1,62 @@
+html, body { height: 100%; overflow: hidden; }
+#root { height: 100%; display: flex; flex-direction: column; }
+.desc { font-size: 12px; line-height: 16px; color: var(--text2); }
+.item { display: flex; align-items: center; gap: 16px; }
+.item .label { flex: 1; min-width: 0; }
+.slider { display: flex; align-items: center; gap: 10px; }
+.slider input { width: 160px; }
+#thresholdVal { min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------- Windows: one page of Fluent settings cards ---------- */
+html.win:not(.backdrop) body { background: var(--solid); }
+html.win #scroll { flex: 1; padding: 28px 28px 24px; }
+html.win .page-title { font: 600 28px/36px "Segoe UI Variable Display", "Segoe UI", sans-serif; margin: 0 0 20px; }
+html.win .section { font-size: 14px; line-height: 20px; font-weight: 600; margin: 22px 0 8px; }
+html.win .pane:first-of-type .section { margin-top: 0; }
+html.win .group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+html.win .item {
+  background: var(--card); border: 1px solid var(--card-stroke); border-radius: 4px;
+  min-height: 68px; padding: 12px 16px;
+}
+html.win .ico { width: 20px; height: 20px; flex: none; color: var(--text); }
+/* Expander: header card with its options attached below it. */
+html.win .group.expander { gap: 0; }
+html.win .group.expander .item:first-child:not(:only-child) { border-radius: 4px 4px 0 0; }
+html.win .group.expander .item.sub { border-radius: 0; border-top: 0; min-height: 52px; padding-left: 52px; }
+html.win .group.expander .item.sub:last-child { border-radius: 0 0 4px 4px; }
+html.win .group:not(.expander) .item.sub { padding-left: 52px; min-height: 52px; }
+html.win .item input.text { width: 260px; }
+html.win .foot { margin-top: 24px; }
+html.win #deviceSelect { max-width: 240px; }
+
+/* ---------- macOS: toolbar tabs + grouped form ---------- */
+html.mac:not(.backdrop) body { background: var(--solid); }
+html.mac body { cursor: default; }
+.mac-top { flex: none; padding-top: 6px; }
+.mac-title { text-align: center; font-weight: 600; font-size: 13px; line-height: 16px; height: 22px; padding-top: 1px; }
+.mac-tabs { justify-content: center; gap: 2px; padding: 0 0 6px; border-bottom: 0.5px solid var(--separator); }
+.mac-tab {
+  font: inherit; font-size: 11px; color: var(--text2); background: transparent; border: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 76px;
+  padding: 5px 8px 4px; border-radius: 6px;
+}
+.mac-tab:hover { background: var(--form); }
+.mac-tab.active { color: var(--accent); background: var(--form); }
+html.mac #scroll { padding: 20px 20px 18px; }
+html.mac .pane { display: none; }
+html.mac .pane.active { display: block; }
+html.mac .group {
+  background: var(--form); border: 0.5px solid var(--form-stroke); border-radius: 8px;
+  padding: 0 10px; margin-bottom: 14px;
+}
+html.mac .item { min-height: 36px; padding: 6px 0; gap: 12px; }
+html.mac .item + .item { border-top: 0.5px solid var(--separator); }
+html.mac .item.sub .label .desc { color: var(--text2); }
+html.mac .foot { justify-content: center; margin-top: -2px; }
+html.mac #signIn { min-width: 70px; }
+html.mac select { max-width: 230px; }
+.mac-tabs { display: flex; }
+html.win .desc.ok { color: var(--success); }
+html.win .desc.err { color: var(--critical); }
+html.mac .desc.ok { color: var(--green); }
+html.mac .desc.err { color: var(--red); }

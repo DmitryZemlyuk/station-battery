@@ -6,6 +6,7 @@ mod core;
 mod i18n;
 mod models;
 mod notify;
+mod platform;
 mod settings;
 mod tray;
 
@@ -51,6 +52,41 @@ fn settings_view<R: Runtime>(app: &AppHandle<R>, core: &Shared) -> SettingsView 
         version: app.package_info().version.to_string(),
         platform: std::env::consts::OS.to_string(),
     }
+}
+
+#[tauri::command]
+fn get_platform() -> platform::PlatformInfo {
+    platform::info()
+}
+
+#[tauri::command]
+fn open_settings(app: AppHandle) {
+    if let Some(p) = tray::popup(&app) {
+        let _ = p.hide();
+    }
+    open_settings_window(&app);
+}
+
+fn open_settings_window<R: Runtime>(app: &AppHandle<R>) {
+    let lang = app.state::<AppState>().core.settings().resolved_lang();
+    platform::open_settings(app, i18n::get(lang).settings_title);
+}
+
+/// The settings page calls this once it has rendered, so the window never flashes empty.
+#[tauri::command]
+fn reveal_window(window: WebviewWindow) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// macOS settings: the window height follows the selected tab.
+#[tauri::command]
+fn set_window_height(window: WebviewWindow, height: f64) {
+    let h = height.clamp(160.0, 900.0);
+    let Ok(size) = window.inner_size() else { return };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let w = size.width as f64 / scale;
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
 }
 
 #[tauri::command]
@@ -112,8 +148,18 @@ fn save_settings(
     if settings.device_sn != old.device_sn {
         core.notify.lock().unwrap().initialized = false;
     }
+    if settings.lang != old.lang {
+        if let Some(w) = app.get_webview_window("settings") {
+            let _ = w.set_title(i18n::get(settings.resolved_lang()).settings_title);
+        }
+    }
+    if settings.tray_style != old.tray_style {
+        *state.last_look.lock().unwrap() = None; // force a redraw
+    }
     core.mark_changed();
-    Ok(settings_view(&app, core))
+    let view = settings_view(&app, core);
+    let _ = app.emit("settings-changed", &view);
+    Ok(view)
 }
 
 #[tauri::command]
@@ -121,7 +167,7 @@ fn set_popup_height(window: WebviewWindow, state: tauri::State<AppState>, height
     let h = height.clamp(120.0, 640.0);
     *state.popup_height.lock().unwrap() = h;
     let scale = window.scale_factor().unwrap_or(1.0);
-    let new_w = (tray::POPUP_WIDTH * scale).round() as u32;
+    let new_w = (tray::popup_width() * scale).round() as u32;
     let new_h = (h * scale).round() as u32;
     let _ = window.set_size(tauri::PhysicalSize::new(new_w, new_h));
     // Re-pin to the anchor chosen when the popup was shown. The target position depends
@@ -142,7 +188,7 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-fn show_popup<R: Runtime>(app: &AppHandle<R>, rect: Option<Rect>, open_settings: bool) {
+fn show_popup<R: Runtime>(app: &AppHandle<R>, rect: Option<Rect>) {
     let Some(win) = tray::popup(app) else { return };
     let state = app.state::<AppState>();
     let height = *state.popup_height.lock().unwrap();
@@ -150,7 +196,7 @@ fn show_popup<R: Runtime>(app: &AppHandle<R>, rect: Option<Rect>, open_settings:
     *state.anchor.lock().unwrap() = anchor;
     let _ = win.show();
     let _ = win.set_focus();
-    let _ = app.emit("popup-shown", open_settings);
+    let _ = app.emit("popup-shown", ());
 }
 
 fn toggle_popup<R: Runtime>(app: &AppHandle<R>, rect: Rect) {
@@ -164,7 +210,7 @@ fn toggle_popup<R: Runtime>(app: &AppHandle<R>, rect: Rect) {
     if now_ms().saturating_sub(state.last_blur_hide.load(Ordering::Relaxed)) < 350 {
         return;
     }
-    show_popup(app, Some(rect), false);
+    show_popup(app, Some(rect));
 }
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<Menu<R>> {
@@ -189,6 +235,8 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
                 None => "–".to_string(),
             };
             let _ = tray_icon.set_title(Some(title));
+        } else if state.core.settings().tray_style == "battery" {
+            let _ = tray_icon.set_icon(Some(tray::render_battery_color(&look, snap.charging == Some(true))));
         } else {
             let _ = tray_icon.set_icon(Some(tray::render_number(&look)));
         }
@@ -233,12 +281,21 @@ async fn change_loop(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_popup(app, None, false);
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // `station-battery --settings` opens the settings window (e.g. from a shortcut).
+            if args.iter().any(|a| a == "--settings") {
+                open_settings_window(app);
+            } else {
+                show_popup(app, None);
+            }
         }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            get_platform,
+            open_settings,
+            reveal_window,
+            set_window_height,
             get_snapshot,
             get_settings,
             save_settings,
@@ -274,6 +331,8 @@ fn main() {
             let look = tray::look(&snap, core.settings().low_threshold);
             let icon = if cfg!(target_os = "macos") {
                 tray::render_battery_template(None)
+            } else if core.settings().tray_style == "battery" {
+                tray::render_battery_color(&look, false)
             } else {
                 tray::render_number(&look)
             };
@@ -283,8 +342,8 @@ fn main() {
                 .menu(&build_menu(app.handle(), &lang)?)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => show_popup(app, None, false),
-                    "settings" => show_popup(app, None, true),
+                    "open" => show_popup(app, None),
+                    "settings" => open_settings_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -305,6 +364,7 @@ fn main() {
             builder.build(app)?;
 
             if let Some(win) = tray::popup(app.handle()) {
+                platform::apply_popup_effects(&win, &platform::info());
                 let handle = app.handle().clone();
                 win.on_window_event(move |e| {
                     if let WindowEvent::Focused(false) = e {
@@ -319,6 +379,10 @@ fn main() {
                         }
                     }
                 });
+            }
+
+            if std::env::args().any(|a| a == "--settings") {
+                open_settings_window(app.handle());
             }
 
             tauri::async_runtime::spawn(ble::run(core.clone()));

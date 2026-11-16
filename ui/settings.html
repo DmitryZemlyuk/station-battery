@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Station Battery</title>
+  <link rel="stylesheet" href="base.css" />
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <div id="root">
+    <!-- macOS: title + toolbar tabs live in the (transparent) title bar area -->
+    <header class="mac-only mac-top" data-tauri-drag-region>
+      <div id="macTitle" class="mac-title" data-tauri-drag-region></div>
+      <nav class="mac-tabs" data-tauri-drag-region>
+        <button class="mac-tab" data-tab="general">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/><circle cx="16" cy="7" r="2.2" stroke="currentColor" stroke-width="1.7" fill="none"/><circle cx="10" cy="17" r="2.2" stroke="currentColor" stroke-width="1.7" fill="none"/></svg>
+          <span data-t="tabGeneral"></span>
+        </button>
+        <button class="mac-tab" data-tab="sources">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 13v8M8.5 9.5a5 5 0 0 1 7 0M5.7 6.7a9 9 0 0 1 12.6 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/><circle cx="12" cy="12.5" r="1.4" fill="currentColor"/></svg>
+          <span data-t="tabSources"></span>
+        </button>
+        <button class="mac-tab" data-tab="notifications">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20.5a2.2 2.2 0 0 0 4 0" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round" fill="none"/></svg>
+          <span data-t="tabNotifications"></span>
+        </button>
+      </nav>
+    </header>
+
+    <main id="scroll" class="scroll">
+      <h1 class="win-only page-title" data-t="pageTitle"></h1>
+
+      <!-- General -->
+      <section class="pane" data-pane="general">
+        <h2 class="win-only section" data-t="tabGeneral"></h2>
+        <div class="group">
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M17 8.5v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><rect x="5" y="7" width="7" height="6" rx="1" fill="currentColor"/></svg>
+            <div class="label"><div data-t="station"></div><div class="desc" data-t="stationHint"></div></div>
+            <select id="deviceSelect"></select>
+          </div>
+          <div id="snRow" class="item sub hidden">
+            <div class="label"><div class="desc" data-t="snHint"></div></div>
+            <input id="snInput" class="text" spellcheck="false" autocomplete="off" />
+          </div>
+        </div>
+        <div class="group">
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M3 10h14M10 3c2 2.2 2.8 4.5 2.8 7s-.8 4.8-2.8 7c-2-2.2-2.8-4.5-2.8-7S8 5.2 10 3z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+            <div class="label"><div data-t="language"></div></div>
+            <select id="lang">
+              <option value="auto" data-t="langAuto"></option>
+              <option value="uk">Українська</option>
+              <option value="ru">Русский</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v7M6 5.5a6 6 0 1 0 8 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
+            <div class="label"><div><span class="win-only" data-t="autostart"></span><span class="mac-only" data-t="autostartMac"></span></div><div class="desc win-only" data-t="autostartWinHint"></div></div>
+            <label class="toggle-wrap"><span class="state" data-for="autostart"></span><input id="autostart" class="toggle" type="checkbox" /></label>
+          </div>
+          <div class="item win-only">
+            <svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="12" width="15" height="5" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="12" y="13.7" width="3.5" height="1.6" rx=".5" fill="currentColor"/></svg>
+            <div class="label"><div data-t="trayIcon"></div><div class="desc" data-t="trayIconHint"></div></div>
+            <select id="trayStyle">
+              <option value="number" data-t="trayNumber"></option>
+              <option value="battery" data-t="trayBattery"></option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sources -->
+      <section class="pane" data-pane="sources">
+        <h2 class="win-only section" data-t="sources"></h2>
+        <div class="group">
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6.5 8 7-4 3.5v-14l4 3.5-8 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+            <div class="label"><div data-t="ble"></div><div class="desc" data-t="bleHint"></div></div>
+            <label class="toggle-wrap"><span class="state" data-for="bleEnabled"></span><input id="bleEnabled" class="toggle" type="checkbox" /></label>
+          </div>
+        </div>
+        <div class="group expander">
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 15.5h8.2a3.3 3.3 0 0 0 .4-6.6 4.8 4.8 0 0 0-9.3 1A2.8 2.8 0 0 0 6 15.5z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+            <div class="label"><div data-t="cloud"></div><div id="cloudDesc" class="desc"></div></div>
+            <label class="toggle-wrap"><span class="state" data-for="cloudEnabled"></span><input id="cloudEnabled" class="toggle" type="checkbox" /></label>
+          </div>
+          <div class="cloud-sub item sub">
+            <div class="label"><div data-t="email"></div></div>
+            <input id="email" class="text" type="email" autocomplete="username" spellcheck="false" />
+          </div>
+          <div class="cloud-sub item sub">
+            <div class="label"><div data-t="password"></div></div>
+            <input id="password" class="text" type="password" autocomplete="current-password" />
+          </div>
+          <div class="cloud-sub item sub">
+            <div class="label"><div data-t="region"></div></div>
+            <select id="region"></select>
+          </div>
+          <div class="cloud-sub item sub">
+            <div class="label"><div id="cloudStatus" class="desc"></div><div class="desc" data-t="signInHint"></div></div>
+            <button id="signIn" class="btn accent" data-t="signIn"></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Notifications -->
+      <section class="pane" data-pane="notifications">
+        <h2 class="win-only section" data-t="notifications"></h2>
+        <div class="group expander">
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="6" width="12" height="8" rx="1.8" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M16.5 8.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="5" y="8" width="2.5" height="4" rx=".6" fill="currentColor"/></svg>
+            <div class="label"><div data-t="notifyLow"></div></div>
+            <label class="toggle-wrap"><span class="state" data-for="notifyLow"></span><input id="notifyLow" class="toggle" type="checkbox" /></label>
+          </div>
+          <div id="thresholdRow" class="item sub">
+            <div class="label"><div data-t="threshold"></div></div>
+            <div class="slider"><input id="lowThreshold" type="range" min="5" max="50" step="5" /><span id="thresholdVal"></span></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="item">
+            <svg class="win-only ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="6" width="12" height="8" rx="1.8" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M16.5 8.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><rect x="5" y="8" width="8" height="4" rx=".6" fill="currentColor"/></svg>
+            <div class="label"><div data-t="notifyFull"></div></div>
+            <label class="toggle-wrap"><span class="state" data-for="notifyFull"></span><input id="notifyFull" class="toggle" type="checkbox" /></label>
+          </div>
+        </div>
+      </section>
+
+      <footer class="foot row">
+        <span id="version" class="desc"></span>
+        <button id="quit" class="btn win-only" data-t="quit"></button>
+      </footer>
+    </main>
+  </div>
+  <script src="i18n.js"></script>
+  <script src="common.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

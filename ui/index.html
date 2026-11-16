@@ -4,104 +4,89 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Station Battery</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="base.css" />
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <div id="card" class="card">
-    <section id="main" class="view">
-      <div class="row head">
-        <span id="model" class="model"></span>
-        <span id="ago" class="muted small"></span>
-      </div>
 
-      <div id="value" class="value-block">
-        <div class="big-row">
-          <span id="soc" class="big">–</span>
-          <span id="bolt" class="bolt hidden" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/></svg>
-          </span>
-          <span id="energy" class="muted small"></span>
+    <!-- Windows 11: Fluent flyout -->
+    <section class="win-only fly">
+      <div class="fly-body">
+        <div class="row">
+          <span id="wModel" class="w-title"></span>
+          <span id="wAgo" class="w-caption"></span>
         </div>
-        <div class="bar"><div id="fill" class="fill"></div></div>
+        <div id="wValue" class="ring-row">
+          <div class="ring">
+            <svg viewBox="0 0 56 56" width="56" height="56" aria-hidden="true">
+              <circle cx="28" cy="28" r="24" class="ring-track" />
+              <circle id="wArc" cx="28" cy="28" r="24" class="ring-arc" />
+            </svg>
+            <svg id="wBolt" class="ring-bolt hidden" viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path d="M9.2 1 3.5 9h4l-1 6 6-8.3H8.4z" fill="currentColor"/></svg>
+          </div>
+          <div>
+            <div id="wSoc" class="w-display">–</div>
+            <div id="wStatus" class="w-caption"></div>
+          </div>
+        </div>
+        <div id="wEmpty" class="w-empty hidden">
+          <div id="wEmptyTitle" class="w-subtitle"></div>
+          <div id="wEmptyHint" class="w-caption"></div>
+        </div>
+        <div id="wTiles" class="w-tiles hidden">
+          <div class="w-tile">
+            <div class="w-caption"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 2v11M3.5 8.5 8 13l4.5-4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <span id="wLIn"></span></div>
+            <div id="wIn" class="w-tile-v"></div>
+          </div>
+          <div class="w-tile">
+            <div class="w-caption"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 14V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <span id="wLOut"></span></div>
+            <div id="wOut" class="w-tile-v"></div>
+          </div>
+        </div>
       </div>
-
-      <div id="empty" class="empty hidden">
-        <div id="emptyTitle" class="empty-title"></div>
-        <div id="emptyHint" class="muted small"></div>
-      </div>
-
-      <div id="tiles" class="tiles hidden">
-        <div class="tile"><div id="lIn" class="muted small"></div><div id="vIn" class="tile-v"></div></div>
-        <div class="tile"><div id="lOut" class="muted small"></div><div id="vOut" class="tile-v"></div></div>
-        <div class="tile"><div id="lTime" class="muted small"></div><div id="vTime" class="tile-v"></div></div>
-      </div>
-
-      <div class="row foot">
-        <span id="source" class="muted small"></span>
-        <button id="openSettings" class="icon-btn" aria-label="Settings">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 4.3c.4-1.8 2.9-1.8 3.4 0a1.7 1.7 0 0 0 2.6 1.1c1.5-.9 3.3.8 2.4 2.4a1.7 1.7 0 0 0 1 2.5c1.8.5 1.8 3 0 3.5a1.7 1.7 0 0 0-1 2.6c.9 1.5-.9 3.3-2.4 2.4a1.7 1.7 0 0 0-2.6 1c-.5 1.8-3 1.8-3.4 0a1.7 1.7 0 0 0-2.6-1c-1.5.9-3.3-.9-2.4-2.4a1.7 1.7 0 0 0-1-2.6c-1.8-.4-1.8-3 0-3.4a1.7 1.7 0 0 0 1-2.6c-.9-1.5.9-3.3 2.4-2.4 1 .6 2.3.1 2.6-1.1z"/><circle cx="12" cy="12" r="3"/></svg>
+      <div class="fly-foot row">
+        <span id="wSource" class="w-caption"></span>
+        <button id="wSettings" class="w-icon-btn">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M10 6.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5ZM7.75 10a2.25 2.25 0 1 1 4.5 0 2.25 2.25 0 0 1-4.5 0Zm4.17-7.48a.75.75 0 0 0-.58-.53 7.6 7.6 0 0 0-2.68 0 .75.75 0 0 0-.58.53l-.4 1.47a.75.75 0 0 1-1.06.47l-1.39-.66a.75.75 0 0 0-.79.1 7.5 7.5 0 0 0-1.34 2.32.75.75 0 0 0 .2.77l1.1 1.03a.75.75 0 0 1 0 1.1l-1.1 1.03a.75.75 0 0 0-.2.77c.29.85.74 1.64 1.34 2.32.2.23.52.3.8.17l1.38-.66a.75.75 0 0 1 1.06.47l.4 1.47c.08.27.3.47.58.53a7.6 7.6 0 0 0 2.68 0 .75.75 0 0 0 .58-.53l.4-1.47a.75.75 0 0 1 1.06-.47l1.39.66c.27.13.6.06.79-.17a7.5 7.5 0 0 0 1.34-2.32.75.75 0 0 0-.2-.77l-1.1-1.03a.75.75 0 0 1 0-1.1l1.1-1.03a.75.75 0 0 0 .2-.77 7.5 7.5 0 0 0-1.34-2.32.75.75 0 0 0-.8-.1l-1.38.66a.75.75 0 0 1-1.06-.47l-.4-1.47Zm-2.58.41a6.6 6.6 0 0 1 1.32 0l.32 1.17a1.75 1.75 0 0 0 2.47 1.1l1.1-.52c.25.34.46.71.62 1.1l-.88.82a1.75 1.75 0 0 0 0 2.56l.88.82c-.16.39-.37.76-.62 1.1l-1.1-.52a1.75 1.75 0 0 0-2.47 1.1l-.32 1.17a6.6 6.6 0 0 1-1.32 0l-.32-1.17a1.75 1.75 0 0 0-2.47-1.1l-1.1.52a6.5 6.5 0 0 1-.62-1.1l.88-.82a1.75 1.75 0 0 0 0-2.56l-.88-.82c.16-.39.37-.76.62-1.1l1.1.52a1.75 1.75 0 0 0 2.47-1.1l.32-1.17Z" fill="currentColor"/></svg>
         </button>
       </div>
     </section>
 
-    <section id="settingsView" class="view hidden">
-      <div class="row head">
-        <button id="back" class="icon-btn" aria-label="Back">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-        </button>
-        <span id="tSettings" class="model grow"></span>
+    <!-- macOS: menu bar panel (Control Center style) -->
+    <section class="mac-only panel">
+      <div class="row m-head">
+        <span id="mModel" class="m-title"></span>
+        <span id="mSource" class="m-caption"></span>
       </div>
-
-      <div class="scroll-wrap">
-        <div id="scroll" class="scroll">
-          <h3 id="tStation"></h3>
-          <select id="deviceSelect"></select>
-          <input id="snInput" class="hidden" spellcheck="false" autocomplete="off" />
-          <p id="tSnHint" class="hint hidden"></p>
-
-          <h3 id="tSources"></h3>
-          <label class="switch-row"><span><span id="tBle"></span><small id="tBleHint"></small></span><input id="bleEnabled" type="checkbox" /></label>
-          <label class="switch-row"><span><span id="tCloud"></span><small id="tCloudHint"></small></span><input id="cloudEnabled" type="checkbox" /></label>
-          <div id="cloudBox" class="sub hidden">
-            <input id="email" type="email" autocomplete="username" spellcheck="false" />
-            <input id="password" type="password" autocomplete="current-password" />
-            <select id="region"></select>
-            <div class="row">
-              <span id="cloudStatus" class="small muted"></span>
-              <button id="signIn" class="btn"></button>
-            </div>
-          </div>
-
-          <h3 id="tNotifications"></h3>
-          <label class="switch-row"><span id="tNotifyLow"></span><input id="notifyLow" type="checkbox" /></label>
-          <div id="thresholdRow" class="row slider-row">
-            <span id="tThreshold" class="small muted"></span>
-            <input id="lowThreshold" type="range" min="5" max="50" step="5" />
-            <span id="thresholdVal" class="small"></span>
-          </div>
-          <label class="switch-row"><span id="tNotifyFull"></span><input id="notifyFull" type="checkbox" /></label>
-
-          <h3 id="tGeneral"></h3>
-          <div class="row field-row"><span id="tLanguage"></span>
-            <select id="lang" class="compact">
-              <option value="auto"></option>
-              <option value="uk">Українська</option>
-              <option value="ru">Русский</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-          <label class="switch-row"><span id="tAutostart"></span><input id="autostart" type="checkbox" /></label>
-
-          <div class="row end">
-            <span id="version" class="small muted"></span>
-            <button id="quit" class="btn danger"></button>
-          </div>
+      <div id="mValue" class="m-group">
+        <div class="row m-big-row">
+          <span class="m-big-wrap">
+            <span id="mSoc" class="m-big">–</span>
+            <svg id="mBolt" class="m-bolt hidden" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M9.2 1 3.5 9h4l-1 6 6-8.3H8.4z" fill="currentColor"/></svg>
+          </span>
+          <span id="mEnergy" class="m-caption"></span>
         </div>
-        <div id="thumb" class="thumb"></div>
+        <div class="m-bar"><div id="mFill" class="m-fill"></div></div>
+        <div id="mStatus" class="m-caption m-status"></div>
+      </div>
+      <div id="mEmpty" class="m-group hidden">
+        <div id="mEmptyTitle" class="m-empty-title"></div>
+        <div id="mEmptyHint" class="m-caption"></div>
+      </div>
+      <div id="mPower" class="m-group m-rows hidden">
+        <div class="row"><span id="mLIn" class="m-caption"></span><span id="mIn"></span></div>
+        <div class="row"><span id="mLOut" class="m-caption"></span><span id="mOut"></span></div>
+      </div>
+      <div class="m-menu">
+        <div class="m-sep"></div>
+        <div id="mSettings" class="m-item row"><span id="mSettingsLabel"></span><span class="m-kbd">⌘,</span></div>
+        <div id="mQuit" class="m-item row"><span id="mQuitLabel"></span><span class="m-kbd">⌘Q</span></div>
       </div>
     </section>
   </div>
   <script src="i18n.js"></script>
-  <script src="app.js"></script>
+  <script src="common.js"></script>
+  <script src="popup.js"></script>
 </body>
 </html>

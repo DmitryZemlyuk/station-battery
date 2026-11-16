@@ -4,6 +4,7 @@
 pub struct T {
     pub open: &'static str,
     pub settings: &'static str,
+    pub settings_title: &'static str,
     pub quit: &'static str,
     pub no_data: &'static str,
     pub charging: &'static str,
@@ -16,7 +17,8 @@ pub struct T {
 
 const UK: T = T {
     open: "Відкрити",
-    settings: "Налаштування",
+    settings: "Налаштування…",
+    settings_title: "Station Battery – налаштування",
     quit: "Вийти",
     no_data: "немає даних",
     charging: "заряджається",
@@ -29,7 +31,8 @@ const UK: T = T {
 
 const RU: T = T {
     open: "Открыть",
-    settings: "Настройки",
+    settings: "Настройки…",
+    settings_title: "Station Battery – настройки",
     quit: "Выйти",
     no_data: "нет данных",
     charging: "заряжается",
@@ -42,7 +45,8 @@ const RU: T = T {
 
 const EN: T = T {
     open: "Open",
-    settings: "Settings",
+    settings: "Settings…",
+    settings_title: "Station Battery Settings",
     quit: "Quit",
     no_data: "no data",
     charging: "charging",

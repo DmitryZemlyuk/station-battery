@@ -19,6 +19,8 @@ pub struct Settings {
     pub low_threshold: u8,
     pub notify_full: bool,
     pub autostart: bool,
+    /// Windows / Linux tray icon: "number" (percentage as the icon) | "battery"
+    pub tray_style: String,
     /// Last station picked automatically (keeps the cloud working when it leaves BLE range).
     pub last_seen_sn: String,
 }
@@ -36,6 +38,7 @@ impl Default for Settings {
             low_threshold: 20,
             notify_full: true,
             autostart: false,
+            tray_style: "number".into(),
             last_seen_sn: String::new(),
         }
     }
@@ -48,6 +51,9 @@ impl Settings {
         }
         if !["eu", "global", "america"].contains(&self.cloud_region.as_str()) {
             self.cloud_region = "eu".into();
+        }
+        if !["number", "battery"].contains(&self.tray_style.as_str()) {
+            self.tray_style = "number".into();
         }
         self.low_threshold = self.low_threshold.clamp(5, 90);
         self.cloud_email = self.cloud_email.trim().to_string();
