@@ -8,6 +8,9 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// Rebuild the scan session after this long without any EcoFlow advert.
+const WATCHDOG_MS: u64 = 3 * 60 * 1000;
+
 fn set_status(core: &Shared, status: &str) {
     let mut ble = core.ble.lock().unwrap();
     if ble.status != status {
@@ -97,14 +100,20 @@ async fn scan_session(core: &Shared) -> Result<(), &'static str> {
     // Remember which peripherals are EcoFlow so RSSI updates are cheap to follow.
     let mut ecoflow: HashMap<PeripheralId, ()> = HashMap::new();
     let mut tick = tokio::time::interval(Duration::from_secs(30));
+    let session_start = now_ms();
     let result = loop {
         tokio::select! {
             _ = core.ble_restart.notified() => break Ok(()),
             _ = tick.tick() => {
                 // Lets the popup notice devices going away / values getting old.
                 core.mark_changed();
-                // Some stacks stop scanning silently (e.g. after sleep): restart it.
-                let _ = central.start_scan(ScanFilter::default()).await;
+                // Some stacks stop scanning silently (e.g. after sleep). Calling start_scan
+                // again is not safe (on Windows btleplug adds another event handler each
+                // time), so when nothing EcoFlow was heard for a while, rebuild the session.
+                let last_adv = core.ble.lock().unwrap().devices.values().map(|d| d.last).max().unwrap_or(0);
+                if now_ms().saturating_sub(last_adv.max(session_start)) > WATCHDOG_MS {
+                    break Ok(());
+                }
             }
             ev = events.next() => {
                 let Some(ev) = ev else { break Err("error") };
