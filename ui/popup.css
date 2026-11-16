@@ -32,6 +32,9 @@ html.win:not(.backdrop) .card {
 .cap-ico { width: 14px; height: 14px; }
 .btn-ico { width: 18px; height: 18px; }
 .w-tile-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.w-tile-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.w-tile-row .w-caption { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.w-health { margin-top: 12px; padding: 0 2px; font-variant-numeric: tabular-nums; }
 .fly-foot { background: var(--layer); border-top: 1px solid var(--divider); padding: 6px 8px 6px 16px; min-height: 48px; }
 .w-icon-btn {
   width: 36px; height: 36px; border: 0; border-radius: 4px; background: transparent; color: var(--text);

@@ -37,12 +37,16 @@
         <div id="wTiles" class="w-tiles hidden">
           <div class="w-tile">
             <div class="w-caption"><span class="cap-ico" data-ico="in"></span><span id="wLIn"></span></div>
-            <div id="wIn" class="w-tile-v"></div>
+            <div class="w-tile-row"><span id="wIn" class="w-tile-v"></span><span id="wInV" class="w-caption"></span></div>
           </div>
           <div class="w-tile">
             <div class="w-caption"><span class="cap-ico" data-ico="out"></span><span id="wLOut"></span></div>
-            <div id="wOut" class="w-tile-v"></div>
+            <div class="w-tile-row"><span id="wOut" class="w-tile-v"></span><span id="wOutV" class="w-caption"></span></div>
           </div>
+        </div>
+        <div id="wHealth" class="w-health row hidden">
+          <span id="wHealthL" class="w-caption"></span>
+          <span id="wHealthV" class="w-caption"></span>
         </div>
       </div>
       <div class="fly-foot row">
@@ -76,6 +80,10 @@
       <div id="mPower" class="m-group m-rows hidden">
         <div class="row"><span id="mLIn" class="m-caption"></span><span id="mIn"></span></div>
         <div class="row"><span id="mLOut" class="m-caption"></span><span id="mOut"></span></div>
+      </div>
+      <div id="mHealth" class="m-group m-rows hidden">
+        <div id="mSohRow" class="row"><span id="mLSoh" class="m-caption"></span><span id="mSoh"></span></div>
+        <div id="mCyclesRow" class="row"><span id="mLCycles" class="m-caption"></span><span id="mCycles"></span></div>
       </div>
       <div class="m-menu">
         <div class="m-sep"></div>

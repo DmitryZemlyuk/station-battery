@@ -7,7 +7,9 @@ EcoFlow portable power station. No installer and no admin rights required.
   BLE advertisement. No pairing, no account, no connection – the station only has to
   be nearby.
 - **EcoFlow cloud (optional):** signs in with your EcoFlow app account and adds input /
-  output power and time to full / empty. Works from anywhere.
+  output power, grid and output voltage, time to full / empty, battery health and cycle
+  count. Works from anywhere. The tray item can show the grid voltage instead of the
+  charge level.
 
 Each platform gets its native look:
 
@@ -76,5 +78,7 @@ the release for the version in `Cargo.toml`, and keeps only the three newest rel
   [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (Windows, MIT)
   and [Ionicons](https://ionic.io/ionicons) (macOS, MIT).
 - Tray icons are drawn at runtime from vectors at the exact pixel size of the tray.
+  Digits use a subset of [Barlow Condensed](https://github.com/jpt/barlow) Bold
+  (SIL OFL, `src-tauri/assets/OFL-Barlow.txt`).
 
 Not affiliated with EcoFlow.

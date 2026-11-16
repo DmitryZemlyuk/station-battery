@@ -27,6 +27,14 @@
       reg.appendChild(o);
     });
     reg.value = cur;
+    // Tray / menu bar item: macOS has no separate battery-glyph style (its battery
+    // already carries the percentage), so that option exists on Windows only.
+    const tray = $("trayStyle");
+    if (SB.isMac()) {
+      const bat = tray.querySelector('option[value="battery"]');
+      if (bat) bat.remove();
+    }
+    tray.querySelector('option[value="number"]').textContent = SB.isMac() ? L.trayCharge : L.trayNumber;
     $("deviceSelect").dataset.sig = "";
     renderTab();
   }
@@ -101,7 +109,9 @@
     $("thresholdVal").textContent = `${s.lowThreshold}%`;
     $("thresholdRow").classList.toggle("hidden", !s.notifyLow);
     $("lang").value = s.lang;
-    $("trayStyle").value = s.trayStyle;
+    // "battery" is not offered on macOS: show it as the default there.
+    $("trayStyle").value = SB.isMac() && s.trayStyle === "battery" ? "number" : s.trayStyle;
+    $("trayHint").textContent = s.trayStyle === "voltage" ? L.trayVoltageHint : SB.isMac() ? "" : L.trayIconHint;
     $("version").textContent = `Station Battery ${sv.version}`;
     renderCloudStatus();
     renderDevices();

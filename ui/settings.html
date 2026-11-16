@@ -61,12 +61,13 @@
             <div class="label"><div><span class="win-only" data-t="autostart"></span><span class="mac-only" data-t="autostartMac"></span></div><div class="desc win-only" data-t="autostartWinHint"></div></div>
             <label class="toggle-wrap"><span class="state" data-for="autostart"></span><input id="autostart" class="toggle" type="checkbox" /></label>
           </div>
-          <div class="item win-only">
+          <div class="item">
             <span class="win-only ico" data-ico="tray"></span>
-            <div class="label"><div data-t="trayIcon"></div><div class="desc" data-t="trayIconHint"></div></div>
+            <div class="label"><div><span class="win-only" data-t="trayIcon"></span><span class="mac-only" data-t="trayIconMac"></span></div><div id="trayHint" class="desc"></div></div>
             <select id="trayStyle">
-              <option value="number" data-t="trayNumber"></option>
+              <option value="number"></option>
               <option value="battery" data-t="trayBattery"></option>
+              <option value="voltage" data-t="trayVoltage"></option>
             </select>
           </div>
         </div>

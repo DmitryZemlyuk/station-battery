@@ -93,6 +93,12 @@ pub struct Snapshot {
     /// Minutes to full (when charging) or to empty.
     pub minutes: Option<i64>,
     pub charging: Option<bool>,
+    /// Grid (AC input) and AC output voltage, volts.
+    pub volts_in: Option<i64>,
+    pub volts_out: Option<i64>,
+    /// Battery state of health, percent, and charge cycles.
+    pub soh: Option<u8>,
+    pub cycles: Option<u32>,
     pub rssi: Option<i16>,
     pub updated_at: u64,
     pub stale: bool,
@@ -128,6 +134,10 @@ pub struct CloudValues {
     pub watts_out: Option<i64>,
     pub minutes: Option<i64>,
     pub charging: Option<bool>,
+    pub volts_in: Option<i64>,
+    pub volts_out: Option<i64>,
+    pub soh: Option<u8>,
+    pub cycles: Option<u32>,
 }
 
 pub fn cloud_values(p: &HashMap<String, Value>) -> CloudValues {
@@ -152,7 +162,22 @@ pub fn cloud_values(p: &HashMap<String, Value>) -> CloudValues {
             .or_else(|| num(p, &["pd.remainTime"]).map(f64::abs).filter(|m| valid(*m)))
     }
     .map(|m| m.round() as i64);
-    CloudValues { soc, watts_in, watts_out, minutes, charging }
+    // The inverter reports millivolts; 0 means no grid (input) or AC switched off (output).
+    // A value under 1000 cannot be a real mains reading in millivolts, so it is taken
+    // as volts already (seen on other models) rather than turned into a false "0 V".
+    let volts = |key: &str| {
+        num(p, &[key]).and_then(|v| match v {
+            v if v == 0.0 => Some(0),
+            v if (1.0..1000.0).contains(&v) => Some(v.round() as i64).filter(|v| *v <= 400),
+            v if (1000.0..=400_000.0).contains(&v) => Some((v / 1000.0).round() as i64),
+            _ => None,
+        })
+    };
+    let volts_in = volts("inv.acInVol");
+    let volts_out = volts("inv.invOutVol");
+    let soh = num(p, &["bms_bmsStatus.soh"]).filter(|v| (1.0..=100.0).contains(v)).map(|v| v.round() as u8);
+    let cycles = num(p, &["bms_bmsStatus.cycles"]).filter(|v| (0.0..=100_000.0).contains(v)).map(|v| v.round() as u32);
+    CloudValues { soc, watts_in, watts_out, minutes, charging, volts_in, volts_out, soh, cycles }
 }
 
 impl Core {
@@ -299,7 +324,12 @@ impl Core {
                     snap.watts_out = v.watts_out;
                     snap.minutes = v.minutes;
                     snap.charging = v.charging;
+                    snap.volts_in = v.volts_in;
+                    snap.volts_out = v.volts_out;
                 }
+                // Slow-moving facts about the battery stay valid without live data.
+                snap.soh = v.soh;
+                snap.cycles = v.cycles;
                 if let Some(soc) = v.soc {
                     let newer_than_ble = ble_reading.map(|(_, t)| cloud.last > t).unwrap_or(true);
                     if newer_than_ble {
@@ -336,10 +366,16 @@ mod tests {
         p.insert("pd.wattsOutSum".into(), json!(45));
         p.insert("bms_emsStatus.chgRemainTime".into(), json!(25));
         p.insert("bms_emsStatus.dsgRemainTime".into(), json!(5999));
+        p.insert("inv.acInVol".into(), json!(228400));
+        p.insert("inv.invOutVol".into(), json!(0));
+        p.insert("bms_bmsStatus.soh".into(), json!(98));
+        p.insert("bms_bmsStatus.cycles".into(), json!(42));
         let v = cloud_values(&p);
         assert_eq!(v.soc, Some(78));
         assert_eq!(v.charging, Some(true));
         assert_eq!(v.minutes, Some(25));
+        assert_eq!((v.volts_in, v.volts_out), (Some(228), Some(0)));
+        assert_eq!((v.soh, v.cycles), (Some(98), Some(42)));
     }
 
     #[test]
@@ -353,6 +389,18 @@ mod tests {
         assert_eq!(v.soc, Some(40));
         assert_eq!(v.charging, Some(false));
         assert_eq!(v.minutes, None);
+        // Not reported (or garbage) stays unknown rather than becoming zero.
+        p.insert("inv.acInVol".into(), json!(-5));
+        p.insert("bms_bmsStatus.soh".into(), json!(0));
+        let v = cloud_values(&p);
+        assert_eq!((v.volts_in, v.volts_out, v.soh, v.cycles), (None, None, None, None));
+        // Already in volts: kept as is, not divided down to zero.
+        p.insert("inv.acInVol".into(), json!(231));
+        p.insert("inv.invOutVol".into(), json!(229900));
+        let v = cloud_values(&p);
+        assert_eq!((v.volts_in, v.volts_out), (Some(231), Some(230)));
+        p.insert("inv.acInVol".into(), json!(999_000_000));
+        assert_eq!(cloud_values(&p).volts_in, None);
     }
 }
 

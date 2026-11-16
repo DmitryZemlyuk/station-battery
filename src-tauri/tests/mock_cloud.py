@@ -56,7 +56,9 @@ def station():
                  "data": {"online": 1, "sn": SN, "quotaMap": {
                      "pd.soc": 78, "bms_bmsStatus.soc": 78, "pd.wattsInSum": 342,
                      "pd.wattsOutSum": 40, "bms_emsStatus.chgRemainTime": 25,
-                     "bms_emsStatus.dsgRemainTime": 5999, "pd.remainTime": -25}}}
+                     "bms_emsStatus.dsgRemainTime": 5999, "pd.remainTime": -25,
+                     "inv.acInVol": 228400, "inv.invOutVol": 230100,
+                     "bms_bmsStatus.soh": 98, "bms_bmsStatus.cycles": 42}}}
         pub = lambda t, m: subprocess.run(["mosquitto_pub", "-p", MQTT_PORT, "-t", t, "-m", json.dumps(m)], check=True)
         pub(f"/app/{USER_ID}/{SN}/thing/property/get_reply", reply)
         pub(f"/app/device/property/{SN}", {"id": 1, "version": "1.0", "moduleType": 1,

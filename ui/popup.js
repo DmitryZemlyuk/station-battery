@@ -47,9 +47,15 @@
     m.source = s.source === "ble"
       ? `${L.viaBle}${!mac && s.rssi != null ? ` · ${String(s.rssi).replace("-", "−")} dBm` : ""}`
       : s.source === "cloud" ? L.viaCloud : "";
-    m.power = has && (s.wattsIn != null || s.wattsOut != null);
+    m.power = has && (s.wattsIn != null || s.wattsOut != null || s.voltsIn != null);
     m.in = s.wattsIn != null ? `${s.wattsIn} ${L.watts}` : "–";
     m.out = s.wattsOut != null ? `${s.wattsOut} ${L.watts}` : "–";
+    // Grid voltage is worth showing even at 0 (no grid); output 0 just means AC is off.
+    m.inV = s.voltsIn != null ? `${s.voltsIn} ${L.volts}` : "";
+    m.outV = s.voltsOut ? `${s.voltsOut} ${L.volts}` : "";
+    m.soh = s.soh != null ? `${s.soh}%` : "";
+    m.cycles = s.cycles != null ? String(s.cycles) : "";
+    m.health = has && (m.soh !== "" || m.cycles !== "");
 
     // Empty state
     let title = L.searching;
@@ -108,6 +114,11 @@
     $("wLOut").textContent = L.out;
     $("wIn").textContent = m.in;
     $("wOut").textContent = m.out;
+    $("wInV").textContent = m.inV;
+    $("wOutV").textContent = m.outV;
+    $("wHealth").classList.toggle("hidden", !m.health);
+    $("wHealthL").textContent = L.health;
+    $("wHealthV").textContent = [m.soh, m.cycles && `${L.cycles}: ${m.cycles}`].filter(Boolean).join(" · ");
     $("wSource").textContent = m.source;
     $("wSettings").title = L.settings;
     $("wSettings").setAttribute("aria-label", L.settings);
@@ -136,8 +147,15 @@
     $("mPower").classList.toggle("hidden", !m.power);
     $("mLIn").textContent = L.in;
     $("mLOut").textContent = L.out;
-    $("mIn").textContent = m.in;
-    $("mOut").textContent = m.out;
+    $("mIn").textContent = [m.in, m.inV].filter(Boolean).join(" · ");
+    $("mOut").textContent = [m.out, m.outV].filter(Boolean).join(" · ");
+    $("mHealth").classList.toggle("hidden", !m.health);
+    $("mSohRow").classList.toggle("hidden", m.soh === "");
+    $("mCyclesRow").classList.toggle("hidden", m.cycles === "");
+    $("mLSoh").textContent = L.health;
+    $("mLCycles").textContent = L.cycles;
+    $("mSoh").textContent = m.soh;
+    $("mCycles").textContent = m.cycles;
     $("mSettingsLabel").textContent = L.menuSettings;
     $("mQuitLabel").textContent = L.menuQuit;
 

@@ -370,6 +370,8 @@ mod tests {
                 assert_eq!(snap.watts_in, Some(342));
                 assert_eq!(snap.charging, Some(true));
                 assert_eq!(snap.minutes, Some(25));
+                assert_eq!((snap.volts_in, snap.volts_out), (Some(228), Some(230)));
+                assert_eq!((snap.soh, snap.cycles), (Some(98), Some(42)));
                 assert_eq!(snap.cloud_status, "online");
                 ok = true;
                 break;

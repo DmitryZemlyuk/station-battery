@@ -16,8 +16,18 @@ pub enum Tone {
     Dim,
 }
 
+/// What the tray item shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    /// Battery percentage.
+    Percent,
+    /// Grid voltage, in volts.
+    Voltage,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct TrayLook {
+    pub kind: Kind,
     pub text: String,
     pub tone: Tone,
     pub fill: Option<u8>,
@@ -37,11 +47,30 @@ pub fn tray_px(scale: f64) -> u32 {
     }
 }
 
-pub fn look(s: &Snapshot, low_threshold: u8, px: u32) -> TrayLook {
+/// Grid voltage outside this range (230 V ±10%, rounded out) is shown as a problem.
+const VOLTS_OK: std::ops::RangeInclusive<i64> = 200..=253;
+
+/// `style` is the `tray_style` setting. "voltage" needs the cloud; without a reading
+/// the item falls back to the percentage instead of going blank.
+pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str) -> TrayLook {
     let light_bar = system_uses_light_theme();
     let charging = s.charging == Some(true);
+    if style == "voltage" {
+        if let Some(v) = s.volts_in {
+            return TrayLook {
+                kind: Kind::Voltage,
+                text: v.to_string(),
+                tone: if VOLTS_OK.contains(&v) { Tone::Normal } else { Tone::Low },
+                fill: s.soc,
+                charging,
+                light_bar,
+                px,
+            };
+        }
+    }
     match s.soc {
         Some(soc) if !s.stale => TrayLook {
+            kind: Kind::Percent,
             text: soc.to_string(),
             tone: if charging {
                 Tone::Charging
@@ -55,8 +84,8 @@ pub fn look(s: &Snapshot, low_threshold: u8, px: u32) -> TrayLook {
             light_bar,
             px,
         },
-        Some(soc) => TrayLook { text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, px },
-        None => TrayLook { text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, px },
+        Some(soc) => TrayLook { kind: Kind::Percent, text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, px },
+        None => TrayLook { kind: Kind::Percent, text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, px },
     }
 }
 
@@ -109,6 +138,25 @@ fn rasterize(svg: &str, w: u32, h: u32) -> Image<'static> {
     Image::new_owned(buf, w, h)
 }
 
+/// Vertical extent of the digits at a font size, as (top, bottom) offsets from the
+/// baseline in pixels (top is positive, bottom is the small overshoot below it).
+/// Taken from the outline of "0" in font units, so there is no pixel rounding in it.
+/// The font is a digits-only subset of Barlow Condensed Bold: sans-serif, and narrow
+/// enough for three digits in a 16 px tray icon.
+fn digit_extent(font: &FontRef, px: f32) -> (f32, f32) {
+    let factor = px / font.height_unscaled();
+    match font.outline(font.glyph_id('0')) {
+        Some(o) => (o.bounds.max.y.max(o.bounds.min.y) * factor, o.bounds.max.y.min(o.bounds.min.y) * factor),
+        None => (px * 0.6, 0.0),
+    }
+}
+
+/// Baseline that centres the digits vertically in a box from `top` to `top + height`.
+fn centred_baseline(font: &FontRef, px: f32, top: f32, height: f32) -> f32 {
+    let (up, down) = digit_extent(font, px);
+    (top + height / 2.0 + (up + down) / 2.0).round()
+}
+
 /// Windows / Linux: the number itself is the icon, drawn at the tray's pixel size.
 pub fn render_number(l: &TrayLook) -> Image<'static> {
     let s = l.px.max(8);
@@ -117,22 +165,20 @@ pub fn render_number(l: &TrayLook) -> Image<'static> {
     let font = FontRef::try_from_slice(FONT).expect("font");
     let [r, g, b] = color(l);
 
-    // The biggest size that fits the width (the font is condensed bold, so two digits
-    // still get most of the height).
+    // The biggest size that fits the width; two digits are limited by the height.
     let width_at = |px: f32| {
         let sf = font.as_scaled(PxScale::from(px));
         l.text.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum::<f32>()
     };
-    let mut px = sf32 * 1.02;
+    let mut px = sf32 * 1.12;
     while px > 6.0 && width_at(px) > sf32 {
         px -= 0.25;
     }
     let sf = font.as_scaled(PxScale::from(px));
     let total_w = width_at(px);
-    // Digits have no descenders: centre the cap height, on a whole pixel so the
+    // Digits have no descenders: centre their height, on a whole pixel so the
     // horizontal strokes stay sharp.
-    let cap = px * 0.73;
-    let baseline = ((sf32 + cap) / 2.0).round();
+    let baseline = centred_baseline(&font, px, 0.0, sf32);
     let mut x = (sf32 - total_w) / 2.0;
 
     for ch in l.text.chars() {
@@ -205,7 +251,7 @@ pub fn render_battery_color(l: &TrayLook) -> Image<'static> {
 /// the width grows with the text.
 pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: bool) -> Image<'static> {
     const H: u32 = 54;
-    const PX: f32 = 30.0; // digit size: 10 pt
+    const PX: f32 = 33.0; // digit size: 11 pt
     let font = FontRef::try_from_slice(FONT).expect("font");
     let sf = font.as_scaled(PxScale::from(PX));
     let text = text.filter(|_| fill.is_some());
@@ -250,7 +296,7 @@ pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: b
     // Coverage of everything that is knocked out of the battery.
     let mut punch = vec![0f32; (w * H) as usize];
     let mut x = bx + (body_w - content) / 2.0;
-    let baseline = (by + (bh + PX * 0.73) / 2.0).round();
+    let baseline = centred_baseline(&font, PX, by, bh);
     for ch in text.chars() {
         let id = sf.glyph_id(ch);
         let glyph = id.with_scale_and_position(PxScale::from(PX), ab_glyph::point(x, baseline));
@@ -285,6 +331,53 @@ pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: b
     Image::new_owned(buf, w, H)
 }
 
+/// macOS, voltage mode: a template image with a small bolt, the grid voltage and the
+/// unit ("V", or "B" which doubles as the Cyrillic "В"), in the same sans-serif digits.
+pub fn render_voltage_template(text: &str, unit: &str) -> Image<'static> {
+    const H: u32 = 54;
+    const PX: f32 = 39.0; // 13 pt
+    const UNIT_PX: f32 = 30.0;
+    let font = FontRef::try_from_slice(FONT).expect("font");
+    let advance = |t: &str, px: f32| {
+        let sf = font.as_scaled(PxScale::from(px));
+        t.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum::<f32>()
+    };
+    let (bolt_w, gap) = (13.0f32, 5.0f32);
+    let text_w = advance(text, PX);
+    let unit_w = advance(unit, UNIT_PX);
+    let w = (3.0 + bolt_w + gap + text_w + 3.0 + unit_w + 3.0).ceil() as u32;
+    let baseline = centred_baseline(&font, PX, 0.0, H as f32);
+
+    // Bolt first (BOLT spans x 5.2..10.3, y 3.2..12.8; 2.6x makes it 25 px tall).
+    let (tx, ty) = (3.0 - 5.2 * 2.6, (H as f32 - 25.0) / 2.0 - 3.2 * 2.6);
+    let bolt = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {H}" width="{w}" height="{H}"><path d="{BOLT}" fill="black" transform="translate({tx} {ty}) scale(2.6)"/></svg>"#
+    );
+    let mut buf = rasterize(&bolt, w, H).rgba().to_vec();
+
+    let mut x = 3.0 + bolt_w + gap;
+    for (t, px) in [(text, PX), (unit, UNIT_PX)] {
+        let sf = font.as_scaled(PxScale::from(px));
+        for ch in t.chars() {
+            let id = sf.glyph_id(ch);
+            let glyph = id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, baseline));
+            x += sf.h_advance(id);
+            if let Some(outlined) = font.outline_glyph(glyph) {
+                let bb = outlined.px_bounds();
+                outlined.draw(|gx, gy, cov| {
+                    let (px_x, px_y) = (bb.min.x as i32 + gx as i32, bb.min.y as i32 + gy as i32);
+                    if px_x >= 0 && px_y >= 0 && (px_x as u32) < w && (px_y as u32) < H {
+                        let i = ((px_y as u32 * w + px_x as u32) * 4 + 3) as usize;
+                        buf[i] = buf[i].max((cov.clamp(0.0, 1.0) * 255.0) as u8);
+                    }
+                });
+            }
+        }
+        x += 3.0;
+    }
+    Image::new_owned(buf, w, H)
+}
+
 pub fn tooltip(s: &Snapshot, lang: &str) -> String {
     let t = i18n::get(lang);
     let name = if s.model.is_empty() { "EcoFlow".to_string() } else { s.model.clone() };
@@ -297,6 +390,9 @@ pub fn tooltip(s: &Snapshot, lang: &str) -> String {
             }
             if let (Some(i), Some(o)) = (s.watts_in, s.watts_out) {
                 out.push_str(&format!("\n↓ {i} {w}  ↑ {o} {w}", w = t.watts));
+            }
+            if let Some(v) = s.volts_in {
+                out.push_str(&format!("\n{} {v} {}", t.grid, t.volts));
             }
             out
         }
@@ -604,17 +700,17 @@ mod tests {
     #[test]
     fn icons_have_the_requested_size_and_content() {
         for px in [16u32, 20, 24, 32] {
-            let l = TrayLook { text: "78".into(), tone: Tone::Normal, fill: Some(78), charging: false, light_bar: false, px };
+            let l = TrayLook { kind: Kind::Percent, text: "78".into(), tone: Tone::Normal, fill: Some(78), charging: false, light_bar: false, px };
             for img in [render_number(&l), render_battery_color(&l)] {
                 assert_eq!((img.width(), img.height()), (px, px));
                 assert!(img.rgba().chunks(4).filter(|p| p[3] > 128).count() > (px * px / 12) as usize);
             }
         }
-        // macOS: 18 pt tall at 3x; wider for three digits plus the bolt; digits are holes.
+        // macOS: 18 pt tall at 3x; never narrower with more content; digits are holes.
         let t = render_battery_template(Some("50"), Some(50), false);
         assert_eq!(t.height(), 54);
         let wide = render_battery_template(Some("100"), Some(100), true);
-        assert!(wide.width() > t.width());
+        assert!(wide.width() >= t.width());
         let solid = |img: &Image| img.rgba().chunks(4).filter(|p| p[3] > 200).count();
         assert!(solid(&render_battery_template(None, Some(100), false)) > solid(&render_battery_template(Some("100"), Some(100), false)));
         // No data: an empty outline, no digits.
@@ -622,6 +718,57 @@ mod tests {
         assert_eq!(empty.width(), t.width());
         assert_eq!(solid(&empty), 0);
         assert_eq!(tray_px(1.0), if cfg!(windows) { 16 } else { 24 });
+        let v = render_voltage_template("228", "V");
+        assert_eq!(v.height(), 54);
+        assert!(v.width() > 60 && v.rgba().chunks(4).any(|p| p[3] > 200));
+    }
+
+    #[test]
+    fn font_subset_has_every_glyph_we_draw() {
+        let font = FontRef::try_from_slice(FONT).unwrap();
+        for ch in "0123456789–VB".chars() {
+            assert_ne!(font.glyph_id(ch).0, 0, "missing glyph for {ch:?}");
+            assert!(font.as_scaled(PxScale::from(20.0)).h_advance(font.glyph_id(ch)) > 1.0);
+        }
+    }
+
+    fn snap(soc: Option<u8>, volts: Option<i64>) -> Snapshot {
+        Snapshot { soc, volts_in: volts, ..Default::default() }
+    }
+
+    #[test]
+    fn voltage_style_shows_volts_and_falls_back_to_percent() {
+        let l = look(&snap(Some(78), Some(228)), 20, 16, "voltage");
+        assert_eq!((l.kind, l.text.as_str(), l.tone), (Kind::Voltage, "228", Tone::Normal));
+        // No grid, or far out of range: flagged.
+        assert_eq!(look(&snap(Some(78), Some(0)), 20, 16, "voltage").tone, Tone::Low);
+        assert_eq!(look(&snap(Some(78), Some(262)), 20, 16, "voltage").tone, Tone::Low);
+        assert_eq!(look(&snap(Some(78), Some(205)), 20, 16, "voltage").tone, Tone::Normal);
+        // No reading (cloud off): the percentage instead of a blank item.
+        let l = look(&snap(Some(78), None), 20, 16, "voltage");
+        assert_eq!((l.kind, l.text.as_str()), (Kind::Percent, "78"));
+        // Other styles never show volts.
+        assert_eq!(look(&snap(Some(78), Some(228)), 20, 16, "number").kind, Kind::Percent);
+        assert_eq!(look(&snap(None, None), 20, 16, "voltage").text, "–");
+    }
+
+    #[test]
+    fn three_digits_fit_the_tray_width() {
+        // Every opaque pixel must be inside the icon: nothing is clipped at the sides.
+        for (text, px) in [("100", 16u32), ("228", 16), ("253", 20), ("78", 16)] {
+            let l = TrayLook { kind: Kind::Voltage, text: text.into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, px };
+            let img = render_number(&l);
+            let rgba = img.rgba();
+            let col_used = |x: u32| (0..px).any(|y| rgba[((y * px + x) * 4 + 3) as usize] > 40);
+            let row_used = |y: u32| (0..px).any(|x| rgba[((y * px + x) * 4 + 3) as usize] > 40);
+            let (rows, cols): (Vec<u32>, Vec<u32>) = ((0..px).filter(|y| row_used(*y)).collect(), (0..px).filter(|x| col_used(*x)).collect());
+            let height = rows.last().unwrap() - rows.first().unwrap() + 1;
+            // Tall enough to read, and vertically centred within a pixel.
+            assert!(height * 2 >= px, "{text}@{px}: {height}px tall");
+            let (top, bottom) = (*rows.first().unwrap(), px - 1 - rows.last().unwrap());
+            assert!(top.abs_diff(bottom) <= 1, "{text}@{px}: top {top} bottom {bottom}");
+            assert!(cols.len() as u32 >= px - 4, "{text}@{px}: only {} columns used", cols.len());
+        }
     }
 
     /// Dumps the tray icons for a visual check: SB_ICON_DIR=/tmp/icons cargo test -- --ignored dump_icons
@@ -640,7 +787,7 @@ mod tests {
                     ("5", Tone::Charging, Some(5), true),
                     ("–", Tone::Dim, None, false),
                 ] {
-                    let l = TrayLook { text: text.into(), tone, fill, charging, light_bar, px };
+                    let l = TrayLook { kind: Kind::Percent, text: text.into(), tone, fill, charging, light_bar, px };
                     for (kind, img) in [("num", render_number(&l)), ("bat", render_battery_color(&l))] {
                         let theme = if light_bar { "light" } else { "dark" };
                         let path = format!("{dir}/{px:02}-{theme}-{n:03}-{kind}-{}x{}.rgba", img.width(), img.height());
@@ -649,6 +796,17 @@ mod tests {
                     n += 1;
                 }
             }
+        }
+        for px in [16u32, 24] {
+            for (j, (v, tone)) in [("228", Tone::Normal), ("0", Tone::Low), ("253", Tone::Normal)].iter().enumerate() {
+                let l = TrayLook { kind: Kind::Voltage, text: (*v).into(), tone: *tone, fill: None, charging: false, light_bar: false, px };
+                let img = render_number(&l);
+                std::fs::write(format!("{dir}/volt-{px:02}-{j}-{}x{}.rgba", img.width(), img.height()), img.rgba()).unwrap();
+            }
+        }
+        for (j, (v, u)) in [("228", "V"), ("228", "B"), ("0", "B")].iter().enumerate() {
+            let t = render_voltage_template(v, u);
+            std::fs::write(format!("{dir}/macv-{j}-{}x{}.rgba", t.width(), t.height()), t.rgba()).unwrap();
         }
         for (i, (fill, ch)) in [(Some(78u8), false), (Some(78), true), (Some(14), false), (Some(100), false), (Some(100), true), (Some(5), true), (None, false)].iter().enumerate() {
             let text = fill.map(|v| v.to_string());

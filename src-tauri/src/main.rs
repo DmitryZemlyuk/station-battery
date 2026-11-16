@@ -27,7 +27,8 @@ struct AppState {
     core: Shared,
     /// When the popup was last hidden by losing focus (to ignore the same click re-opening it).
     last_blur_hide: AtomicU64,
-    last_look: Mutex<Option<tray::TrayLook>>,
+    /// What the tray currently shows (look + voltage unit), to skip redundant redraws.
+    last_look: Mutex<Option<(tray::TrayLook, &'static str)>>,
     menu_lang: Mutex<String>,
     /// Where the visible popup is pinned (set each time it is shown).
     anchor: Mutex<Option<tray::Anchor>>,
@@ -229,23 +230,30 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<Menu<
 
 fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Snapshot) {
     let state = app.state::<AppState>();
-    let low = state.core.settings().low_threshold;
+    let settings = state.core.settings();
     let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-    let look = tray::look(snap, low, tray::tray_px(scale));
+    let look = tray::look(snap, settings.low_threshold, tray::tray_px(scale), &settings.tray_style);
+    // The unit sits next to the number on macOS, so a language change redraws it too.
+    let unit = if snap.lang == "en" { "V" } else { "B" };
     let mut last = state.last_look.lock().unwrap();
-    if last.as_ref() != Some(&look) {
+    let drawn = (look, unit);
+    if last.as_ref() != Some(&drawn) {
+        let (look, unit) = &drawn;
         if cfg!(target_os = "macos") {
-            // The percentage is inside the battery glyph (like the system battery item);
-            // a separate title would use the large menu bar font.
-            let icon = tray::render_battery_template(Some(&look.text), look.fill, look.charging);
+            // The number is part of the image (like the system battery item); a separate
+            // title would use the large menu bar font.
+            let icon = match look.kind {
+                tray::Kind::Voltage => tray::render_voltage_template(&look.text, unit),
+                tray::Kind::Percent => tray::render_battery_template(Some(&look.text), look.fill, look.charging),
+            };
             let _ = tray_icon.set_icon(Some(icon));
             let _ = tray_icon.set_icon_as_template(true);
-        } else if state.core.settings().tray_style == "battery" {
-            let _ = tray_icon.set_icon(Some(tray::render_battery_color(&look)));
+        } else if settings.tray_style == "battery" && look.kind == tray::Kind::Percent {
+            let _ = tray_icon.set_icon(Some(tray::render_battery_color(look)));
         } else {
-            let _ = tray_icon.set_icon(Some(tray::render_number(&look)));
+            let _ = tray_icon.set_icon(Some(tray::render_number(look)));
         }
-        *last = Some(look);
+        *last = Some(drawn);
     }
     let _ = tray_icon.set_tooltip(Some(tray::tooltip(snap, &snap.lang)));
 
@@ -334,7 +342,7 @@ fn main() {
 
             let snap = core.snapshot();
             let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale));
+            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale), "number");
             let icon = if cfg!(target_os = "macos") {
                 tray::render_battery_template(None, None, false)
             } else if core.settings().tray_style == "battery" {
