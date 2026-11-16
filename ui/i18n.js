@@ -2,6 +2,9 @@ window.I18N = {
   uk: {
     bleNoSoc: "Ця модель не передає відсоток по Bluetooth",
     useCloud: "Увімкніть хмару EcoFlow у налаштуваннях",
+    btOff: "Bluetooth вимкнено на комп’ютері",
+    noPermission: "Немає доступу до Bluetooth",
+    noPermissionHint: "Дозвольте його: Системні параметри → Приватність і безпека → Bluetooth",
     searching: "Шукаю станцію по Bluetooth…",
     noStation: "Станцію не знайдено",
     bleOff: "Bluetooth вимкнено в налаштуваннях",
@@ -70,6 +73,9 @@ window.I18N = {
   ru: {
     bleNoSoc: "Эта модель не передаёт процент по Bluetooth",
     useCloud: "Включите облако EcoFlow в настройках",
+    btOff: "Bluetooth выключен на компьютере",
+    noPermission: "Нет доступа к Bluetooth",
+    noPermissionHint: "Разрешите его: Системные настройки → Конфиденциальность и безопасность → Bluetooth",
     searching: "Ищу станцию по Bluetooth…",
     noStation: "Станция не найдена",
     bleOff: "Bluetooth выключен в настройках",
@@ -138,6 +144,9 @@ window.I18N = {
   en: {
     bleNoSoc: "This model doesn’t broadcast its level over Bluetooth",
     useCloud: "Turn on EcoFlow cloud in settings",
+    btOff: "Bluetooth is turned off on this computer",
+    noPermission: "No access to Bluetooth",
+    noPermissionHint: "Allow it in System Settings → Privacy & Security → Bluetooth",
     searching: "Looking for your station over Bluetooth…",
     noStation: "No station found",
     bleOff: "Bluetooth is off in settings",

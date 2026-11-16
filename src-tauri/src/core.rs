@@ -183,9 +183,15 @@ impl Core {
         let now = now_ms();
         let nearest = {
             let ble = self.ble.lock().unwrap();
+            let fresh = |d: &BleSeen| now.saturating_sub(d.last) < BLE_FRESH_MS;
+            // Stay with the station already chosen while it is still in range, so two
+            // stations with similar signal don't keep swapping places.
+            if ble.devices.get(&s.last_seen_sn).is_some_and(fresh) {
+                return s.last_seen_sn;
+            }
             ble.devices
                 .iter()
-                .filter(|(_, d)| now.saturating_sub(d.last) < BLE_FRESH_MS)
+                .filter(|(_, d)| fresh(d))
                 .max_by_key(|(sn, d)| (d.soc.is_some(), d.rssi.unwrap_or(-200), (*sn).clone()))
                 .map(|(sn, _)| sn.clone())
         };
@@ -323,5 +329,60 @@ mod tests {
         assert_eq!(v.soc, Some(40));
         assert_eq!(v.charging, Some(false));
         assert_eq!(v.minutes, None);
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    fn core() -> Shared {
+        let path = std::env::temp_dir().join(format!("sb-sel-{}.json", now_ms()));
+        Core::new(Settings::default(), path)
+    }
+
+    fn see(core: &Shared, sn: &str, rssi: i16, soc: Option<u8>, age_ms: u64) {
+        let t = now_ms() - age_ms;
+        core.ble.lock().unwrap().devices.insert(sn.into(), BleSeen { soc, rssi: Some(rssi), last: t, soc_at: t });
+    }
+
+    #[test]
+    fn auto_pick_is_sticky_and_survives_out_of_range() {
+        let c = core();
+        assert_eq!(c.effective_sn(), "");
+        see(&c, "R621AAAAAAAAAAAA", -70, Some(50), 0);
+        assert_eq!(c.effective_sn(), "R621AAAAAAAAAAAA");
+        // A stronger neighbour appears: keep the one already chosen.
+        see(&c, "R601BBBBBBBBBBBB", -40, Some(90), 0);
+        assert_eq!(c.effective_sn(), "R621AAAAAAAAAAAA");
+        // The chosen one leaves range: switch to what is still visible.
+        see(&c, "R621AAAAAAAAAAAA", -70, Some(50), BLE_FRESH_MS + 1000);
+        assert_eq!(c.effective_sn(), "R601BBBBBBBBBBBB");
+        // Nothing in range: remember the last one (keeps the cloud session alive).
+        see(&c, "R601BBBBBBBBBBBB", -40, Some(90), BLE_FRESH_MS + 1000);
+        assert_eq!(c.effective_sn(), "R601BBBBBBBBBBBB");
+        let _ = std::fs::remove_file(&c.settings_path);
+    }
+
+    #[test]
+    fn explicit_choice_wins() {
+        let c = core();
+        c.settings.write().unwrap().device_sn = "R351CCCCCCCCCCCC".into();
+        see(&c, "R621AAAAAAAAAAAA", -40, Some(50), 0);
+        assert_eq!(c.effective_sn(), "R351CCCCCCCCCCCC");
+        let snap = c.snapshot();
+        assert_eq!(snap.model, "Delta 2 Max");
+        assert_eq!(snap.soc, None); // the selected station is not the one in range
+    }
+
+    #[test]
+    fn ble_reading_expires() {
+        let c = core();
+        see(&c, "R621AAAAAAAAAAAA", -60, Some(78), 1000);
+        let s = c.snapshot();
+        assert_eq!((s.soc, s.source.as_str()), (Some(78), "ble"));
+        see(&c, "R621AAAAAAAAAAAA", -60, Some(78), BLE_FRESH_MS + 1000);
+        assert_eq!(c.snapshot().soc, None);
+        let _ = std::fs::remove_file(&c.settings_path);
     }
 }

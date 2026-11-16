@@ -183,35 +183,73 @@ pub fn tooltip(s: &Snapshot, lang: &str) -> String {
     }
 }
 
-/// Place the popup next to the tray icon, inside the monitor that holds it.
-pub fn place_popup<R: Runtime>(win: &WebviewWindow<R>, tray_rect: Option<Rect>) {
-    let Ok(size) = win.outer_size() else { return };
-    let scale = win.scale_factor().unwrap_or(1.0);
-    let margin = (8.0 * scale) as i32;
+/// Where the popup is pinned, so later height changes can be applied idempotently.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anchor {
+    pub x: i32,
+    /// Bottom edge when `bottom` is true, otherwise the top edge.
+    pub edge_y: i32,
+    pub bottom: bool,
+    /// Vertical bounds of the monitor (already shrunk by the margin).
+    pub min_y: i32,
+    pub max_y: i32,
+}
 
-    let (icon_pos, icon_size) = match tray_rect {
-        Some(r) => (r.position.to_physical::<f64>(scale), r.size.to_physical::<f64>(scale)),
-        None => {
-            // No tray coordinates (e.g. opened from the second instance): bottom-right.
-            if let Ok(Some(m)) = win.primary_monitor() {
-                let p = m.position();
-                let s = m.size();
-                let _ = win.set_position(PhysicalPosition::new(
-                    p.x + s.width as i32 - size.width as i32 - margin,
-                    p.y + s.height as i32 - size.height as i32 - margin * 7,
-                ));
-            }
-            return;
-        }
+impl Anchor {
+    /// Top-left y for a popup of the given physical height.
+    pub fn y_for(&self, height: i32) -> i32 {
+        let y = if self.bottom { self.edge_y - height } else { self.edge_y };
+        let hi = (self.max_y - height).max(self.min_y);
+        y.clamp(self.min_y, hi)
+    }
+}
+
+/// Decide where the popup goes. Pure geometry (physical pixels), unit-tested.
+/// `icon` is (x, y, w, h) of the tray icon; `mon` is (x0, y0, x1, y1).
+pub fn compute_anchor(icon: Option<(f64, f64, f64, f64)>, mon: (i32, i32, i32, i32), w: i32, margin: i32) -> Anchor {
+    let (mx0, my0, mx1, my1) = mon;
+    let min_y = my0 + margin;
+    let max_y = my1 - margin;
+    let clamp_x = |x: i32| x.clamp(mx0 + margin, (mx1 - w - margin).max(mx0 + margin));
+    let Some((ix, iy, iw, ih)) = icon else {
+        // No tray coordinates (opened from the menu or a second launch): bottom-right,
+        // above a typical taskbar.
+        return Anchor { x: clamp_x(mx1 - w - margin), edge_y: my1 - margin * 7, bottom: true, min_y, max_y };
     };
+    let cx = (ix + iw / 2.0) as i32;
+    let cy = (iy + ih / 2.0) as i32;
+    let at_top = cy < (my0 + my1) / 2;
+    // Vertical taskbar on the left/right edge, icon not in the bottom corner.
+    let near_left = cx - mx0 < 120;
+    let near_right = mx1 - cx < 120;
+    if !at_top && (near_left || near_right) && cy < my1 - 120 {
+        let x = if near_left { (ix + iw) as i32 + margin } else { ix as i32 - w - margin };
+        return Anchor { x: clamp_x(x), edge_y: cy + 60, bottom: true, min_y, max_y };
+    }
+    if at_top {
+        Anchor { x: clamp_x(cx - w / 2), edge_y: (iy + ih) as i32 + margin / 2, bottom: false, min_y, max_y }
+    } else {
+        Anchor { x: clamp_x(cx - w / 2), edge_y: iy as i32 - margin / 2, bottom: true, min_y, max_y }
+    }
+}
 
-    let cx = icon_pos.x + icon_size.width / 2.0;
-    let cy = icon_pos.y + icon_size.height / 2.0;
-    let monitor = win
-        .available_monitors()
-        .ok()
-        .and_then(|ms| {
-            ms.into_iter().find(|m| {
+/// Popup width in logical pixels (matches the card width in ui/style.css).
+pub const POPUP_WIDTH: f64 = 300.0;
+
+/// Place the popup next to the tray icon, inside the monitor that holds it.
+/// `height` is the popup's current logical height. Sizes are computed from known
+/// values instead of asking the OS, which may report nonsense for a hidden window.
+pub fn place_popup<R: Runtime>(win: &WebviewWindow<R>, tray_rect: Option<Rect>, height: f64) -> Option<Anchor> {
+    let win_scale = win.scale_factor().unwrap_or(1.0);
+    let icon = tray_rect.map(|r| {
+        let p = r.position.to_physical::<f64>(win_scale);
+        let s = r.size.to_physical::<f64>(win_scale);
+        (p.x, p.y, s.width, s.height)
+    });
+    let monitor = icon
+        .and_then(|(ix, iy, iw, ih)| {
+            let (cx, cy) = (ix + iw / 2.0, iy + ih / 2.0);
+            win.available_monitors().ok()?.into_iter().find(|m| {
                 let p = m.position();
                 let s = m.size();
                 cx >= p.x as f64
@@ -220,33 +258,71 @@ pub fn place_popup<R: Runtime>(win: &WebviewWindow<R>, tray_rect: Option<Rect>) 
                     && cy < (p.y + s.height as i32) as f64
             })
         })
-        .or_else(|| win.primary_monitor().ok().flatten());
-    let Some(m) = monitor else { return };
-    let mp = m.position();
-    let ms = m.size();
-    let (mx0, my0) = (mp.x, mp.y);
-    let (mx1, my1) = (mp.x + ms.width as i32, mp.y + ms.height as i32);
+        .or_else(|| win.primary_monitor().ok().flatten())?;
+    let mp = monitor.position();
+    let ms = monitor.size();
+    let mon = (mp.x, mp.y, mp.x + ms.width as i32, mp.y + ms.height as i32);
+    // The popup takes the scale of the monitor it is shown on.
+    let scale = monitor.scale_factor();
+    let w = (POPUP_WIDTH * scale).round() as i32;
+    let h = (height * scale).round() as i32;
+    let margin = (8.0 * scale).round() as i32;
 
-    let w = size.width as i32;
-    let h = size.height as i32;
-    let mut x = cx as i32 - w / 2;
-    let at_top = cy < (my0 + my1) as f64 / 2.0;
-    let mut y = if at_top {
-        (icon_pos.y + icon_size.height) as i32 + margin / 2
-    } else {
-        icon_pos.y as i32 - h - margin / 2
-    };
-    // Vertical taskbar (left/right): put the popup beside the icon.
-    let at_side = icon_size.height > 0.0 && (cx as i32 - mx0 < 120 || mx1 - (cx as i32) < 120) && !at_top && (cy as i32) < my1 - 120;
-    if at_side {
-        x = if cx as i32 - mx0 < 120 { (icon_pos.x + icon_size.width) as i32 + margin } else { icon_pos.x as i32 - w - margin };
-        y = cy as i32 - h / 2;
-    }
-    x = x.clamp(mx0 + margin, mx1 - w - margin);
-    y = y.clamp(my0 + margin, my1 - h - margin);
-    let _ = win.set_position(PhysicalPosition::new(x, y));
+    let anchor = compute_anchor(icon, mon, w, margin);
+    let _ = win.set_position(PhysicalPosition::new(anchor.x, anchor.y_for(h)));
+    Some(anchor)
 }
 
 pub fn popup<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
     app.get_webview_window("popup")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MON: (i32, i32, i32, i32) = (0, 0, 1920, 1080);
+
+    #[test]
+    fn bottom_taskbar_keeps_bottom_edge() {
+        // Tray icon in a bottom taskbar (48 px high).
+        let a = compute_anchor(Some((1700.0, 1040.0, 24.0, 24.0)), MON, 300, 8);
+        assert!(a.bottom);
+        assert_eq!(a.edge_y, 1036);
+        // Growing or shrinking never moves the bottom edge, however often it is applied.
+        assert_eq!(a.y_for(140) + 140, 1036);
+        assert_eq!(a.y_for(500) + 500, 1036);
+        assert_eq!(a.y_for(500), a.y_for(500));
+        assert_eq!(a.x, 1712 - 150);
+    }
+
+    #[test]
+    fn top_menu_bar_hangs_below_icon() {
+        let a = compute_anchor(Some((1500.0, 0.0, 30.0, 24.0)), MON, 300, 8);
+        assert!(!a.bottom);
+        assert_eq!(a.y_for(140), 28);
+        assert_eq!(a.y_for(500), 28);
+    }
+
+    #[test]
+    fn stays_on_screen() {
+        // Icon at the far right: popup is clamped inside the monitor.
+        let a = compute_anchor(Some((1900.0, 1050.0, 16.0, 16.0)), MON, 300, 8);
+        assert_eq!(a.x, 1920 - 300 - 8);
+        // A popup taller than the space above the taskbar is clamped to the top margin.
+        assert_eq!(a.y_for(2000), 8);
+        // Fallback without tray coordinates.
+        let f = compute_anchor(None, MON, 300, 8);
+        assert!(f.bottom);
+        assert_eq!(f.y_for(200) + 200, 1080 - 56);
+    }
+
+    #[test]
+    fn second_monitor_offsets() {
+        let mon = (1920, -200, 1920 + 2560, 1240);
+        let a = compute_anchor(Some((4300.0, 1200.0, 24.0, 24.0)), mon, 300, 8);
+        assert!(a.bottom);
+        assert!(a.x >= 1920 + 8 && a.x + 300 <= 1920 + 2560 - 8);
+        assert_eq!(a.y_for(140) + 140, 1196);
+    }
 }

@@ -21,10 +21,13 @@ jobs:
       - name: System libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config mosquitto mosquitto-clients
+          sudo systemctl stop mosquitto || true
       - name: Unit tests
         working-directory: src-tauri
         run: cargo test --locked
+      - name: Cloud end-to-end tests (local mock API and MQTT broker)
+        run: src-tauri/tests/run_e2e.sh
 
   windows:
     needs: test

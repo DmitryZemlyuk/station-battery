@@ -16,6 +16,8 @@ struct Login {
     mqtt_port: u16,
     mqtt_user: String,
     mqtt_pass: String,
+    /// The certificate response names the protocol; EcoFlow uses "mqtts".
+    mqtt_tls: bool,
 }
 
 enum Fail {
@@ -51,10 +53,11 @@ fn api_ok(v: &Value) -> Result<(), String> {
     }
 }
 
-async fn login(host: &str, email: &str, password: &str) -> Result<Login, Fail> {
+/// `base` is the API origin, e.g. "https://api-e.ecoflow.com".
+async fn login(base: &str, email: &str, password: &str) -> Result<Login, Fail> {
     let client = http();
     let resp = client
-        .post(format!("https://{host}/auth/login"))
+        .post(format!("{base}/auth/login"))
         .header("lang", "en_US")
         .json(&json!({
             "email": email,
@@ -65,9 +68,14 @@ async fn login(host: &str, email: &str, password: &str) -> Result<Login, Fail> {
         .send()
         .await
         .map_err(|e| Fail::Other(e.to_string()))?;
+    let status = resp.status();
+    if status.is_server_error() || status.as_u16() == 429 {
+        // The service is down or throttling: retry later, the credentials may be fine.
+        return Err(Fail::Other(format!("HTTP {}", status.as_u16())));
+    }
     let v: Value = resp.json().await.map_err(|e| Fail::Other(e.to_string()))?;
     if let Err(m) = api_ok(&v) {
-        // Any error code from /auth/login means the credentials were rejected.
+        // An error code from /auth/login means the credentials were rejected.
         return Err(if v.get("code").is_some() { Fail::Auth(m) } else { Fail::Other(m) });
     }
     let token = v["data"]["token"].as_str().ok_or(Fail::Other("no token".into()))?.to_string();
@@ -78,10 +86,12 @@ async fn login(host: &str, email: &str, password: &str) -> Result<Login, Fail> {
     };
 
     let resp = client
-        .get(format!("https://{host}/iot-auth/app/certification"))
+        .get(format!("{base}/iot-auth/app/certification"))
         .header("lang", "en_US")
         .bearer_auth(&token)
+        // Known clients pass userId either in the query or in the body; send both.
         .query(&[("userId", &user_id)])
+        .json(&json!({ "userId": user_id }))
         .send()
         .await
         .map_err(|e| Fail::Other(e.to_string()))?;
@@ -99,6 +109,7 @@ async fn login(host: &str, email: &str, password: &str) -> Result<Login, Fail> {
         mqtt_port: port,
         mqtt_user: d["certificateAccount"].as_str().unwrap_or_default().to_string(),
         mqtt_pass: d["certificatePassword"].as_str().unwrap_or_default().to_string(),
+        mqtt_tls: d["protocol"].as_str().map(|p| p != "mqtt").unwrap_or(true),
     })
 }
 
@@ -197,7 +208,8 @@ pub async fn run(core: Shared) {
         }
 
         set(&core, "connecting", "");
-        let result = session(&core, &s.api_host().to_string(), &s.cloud_email, &password.unwrap(), &sn).await;
+        let base = format!("https://{}", s.api_host());
+        let result = session(&core, &base, &s.cloud_email, &password.unwrap(), &sn).await;
         match result {
             Ok(()) => backoff = 10, // restart requested
             Err(Fail::Auth(m)) => {
@@ -218,8 +230,8 @@ pub async fn run(core: Shared) {
     }
 }
 
-async fn session(core: &Shared, host: &str, email: &str, password: &str, sn: &str) -> Result<(), Fail> {
-    let l = login(host, email, password).await?;
+async fn session(core: &Shared, base: &str, email: &str, password: &str, sn: &str) -> Result<(), Fail> {
+    let l = login(base, email, password).await?;
     let client_id = format!(
         "ANDROID_{}_{}",
         uuid::Uuid::new_v4().simple().to_string().to_uppercase(),
@@ -229,7 +241,9 @@ async fn session(core: &Shared, host: &str, email: &str, password: &str, sn: &st
     opts.set_credentials(l.mqtt_user.clone(), l.mqtt_pass.clone());
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);
-    opts.set_transport(Transport::tls_with_default_config());
+    if l.mqtt_tls {
+        opts.set_transport(Transport::tls_with_default_config());
+    }
 
     let data_topic = format!("/app/device/property/{sn}");
     let get_topic = format!("/app/{}/{sn}/thing/property/get", l.user_id);
@@ -316,5 +330,66 @@ mod tests {
         let offline = br#"{"operateType":"latestQuotas","data":{"online":0}}"#;
         drop(c);
         assert_eq!(apply_message(&core, "R621X", "/app/device/property/R621X", offline, "/x"), Some(false));
+    }
+
+    /// End-to-end against a local mock API + MQTT broker (see tests/mock_cloud.py):
+    ///   SB_MOCK_API=http://127.0.0.1:18080 cargo test -- --ignored cloud_end_to_end
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn cloud_end_to_end() {
+        let base = std::env::var("SB_MOCK_API").expect("SB_MOCK_API");
+        let sn = "R621ZEB4ZE123456";
+
+        // Wrong password is classified as an auth error, a 503 as a retryable one.
+        assert!(matches!(login(&base, "me@example.com", "wrong").await, Err(Fail::Auth(_))));
+        assert!(matches!(login(&base, "down@example.com", "x").await, Err(Fail::Other(_))));
+        let l = login(&base, "me@example.com", "secret").await.ok().expect("login");
+        assert_eq!(l.user_id, "1234567890");
+        assert!(!l.mqtt_tls);
+
+        let mut s = Settings::default();
+        s.device_sn = sn.into();
+        s.cloud_enabled = true;
+        let core = Core::new(s, std::env::temp_dir().join("sb-e2e.json"));
+        core.cloud.lock().unwrap().sn = sn.into();
+
+        let c2 = core.clone();
+        let base2 = base.clone();
+        let task = tokio::spawn(async move { session(&c2, &base2, "me@example.com", "secret", sn).await.is_ok() });
+
+        // The mock answers the latestQuotas request and then pushes a partial update.
+        let mut ok = false;
+        for _ in 0..80 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let snap = core.snapshot();
+            if snap.watts_out == Some(45) && snap.soc == Some(79) {
+                assert_eq!(snap.source, "cloud");
+                assert_eq!(snap.watts_in, Some(342));
+                assert_eq!(snap.charging, Some(true));
+                assert_eq!(snap.minutes, Some(25));
+                assert_eq!(snap.cloud_status, "online");
+                ok = true;
+                break;
+            }
+        }
+        assert!(ok, "no cloud data: status={} params={:?}", core.cloud.lock().unwrap().status, core.cloud.lock().unwrap().params);
+
+        // A settings change ends the session cleanly.
+        core.cloud_restart.notify_one();
+        assert!(tokio::time::timeout(Duration::from_secs(10), task).await.expect("session end").unwrap());
+    }
+
+    /// TLS transport against a broker with an untrusted certificate must fail with an
+    /// error (and never panic): SB_MOCK_TLS_PORT=18884 cargo test -- --ignored mqtt_tls
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn mqtt_tls_rejects_untrusted_cert() {
+        let port: u16 = std::env::var("SB_MOCK_TLS_PORT").expect("SB_MOCK_TLS_PORT").parse().unwrap();
+        let mut opts = MqttOptions::new("test", "127.0.0.1", port);
+        opts.set_transport(Transport::tls_with_default_config());
+        let (_client, mut eventloop) = AsyncClient::new(opts, 4);
+        let r = tokio::time::timeout(Duration::from_secs(10), eventloop.poll()).await.expect("timeout");
+        let err = r.expect_err("must not connect to an untrusted broker").to_string();
+        assert!(err.to_lowercase().contains("tls") || err.to_lowercase().contains("certificate") || err.to_lowercase().contains("invalid"), "{err}");
     }
 }

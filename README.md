@@ -52,6 +52,7 @@ app-config folder.
 npx @tauri-apps/cli@2 build --no-bundle          # Windows portable exe
 npx @tauri-apps/cli@2 build --bundles app         # macOS .app
 cd src-tauri && cargo test                        # unit tests
+src-tauri/tests/run_e2e.sh                        # cloud end-to-end against a local mock
 ```
 
 CI (`.github/workflows/build.yml`) builds both on every push to `main` and attaches them

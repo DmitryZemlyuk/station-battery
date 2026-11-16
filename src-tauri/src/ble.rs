@@ -2,14 +2,33 @@
 
 use crate::core::{now_ms, BleSeen, Shared, BLE_FRESH_MS};
 use crate::models::{parse_advert, MANUFACTURER_ID};
-use btleplug::api::{Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{Central, CentralEvent, CentralState, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager, PeripheralId};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// Rebuild the scan session after this long without any EcoFlow advert.
-const WATCHDOG_MS: u64 = 3 * 60 * 1000;
+/// Rebuild the scan session after this long without any EcoFlow advert...
+const WATCHDOG_MIN_MS: u64 = 3 * 60 * 1000;
+/// ...backing off to this while no station is around. A rebuild is not free on
+/// Windows (btleplug keeps a small per-adapter allocation alive through its radio
+/// state handler), so an idle app must not rebuild every few minutes forever.
+const WATCHDOG_MAX_MS: u64 = 30 * 60 * 1000;
+
+enum End {
+    /// Settings changed or the radio came back: start again right away.
+    Requested,
+    /// Nothing heard for the watchdog period.
+    Watchdog,
+}
+
+/// macOS: every btleplug adapter owns a thread and a CBCentralManager that are never
+/// released, so one adapter is created and reused for the life of the process (calling
+/// start_scan on it again is harmless there).
+/// Windows: the opposite. start_scan registers one more advert handler on the same
+/// watcher each time, so every session gets a fresh adapter, which is cheap and is
+/// released when dropped.
+const REUSE_ADAPTER: bool = cfg!(target_os = "macos");
 
 fn set_status(core: &Shared, status: &str) {
     let mut ble = core.ble.lock().unwrap();
@@ -21,15 +40,26 @@ fn set_status(core: &Shared, status: &str) {
 }
 
 pub async fn run(core: Shared) {
+    let mut cached: Option<Adapter> = None;
+    let mut watchdog_ms = WATCHDOG_MIN_MS;
     loop {
         if !core.settings().ble_enabled {
             set_status(&core, "off");
             core.ble_restart.notified().await;
             continue;
         }
-        set_status(&core, "starting");
-        match scan_session(&core).await {
-            Ok(()) => {} // restarted on purpose
+        if core.ble.lock().unwrap().status == "off" {
+            set_status(&core, "starting");
+        }
+        let heard_before = last_advert(&core);
+        match scan_session(&core, &mut cached, watchdog_ms).await {
+            Ok(end) => {
+                let heard = last_advert(&core) > heard_before;
+                watchdog_ms = match end {
+                    End::Watchdog if !heard => (watchdog_ms * 2).min(WATCHDOG_MAX_MS),
+                    _ => WATCHDOG_MIN_MS,
+                };
+            }
             Err(status) => {
                 set_status(&core, status);
                 tokio::select! {
@@ -41,12 +71,20 @@ pub async fn run(core: Shared) {
     }
 }
 
+fn last_advert(core: &Shared) -> u64 {
+    core.ble.lock().unwrap().devices.values().map(|d| d.last).max().unwrap_or(0)
+}
+
 async fn adapter() -> Result<Adapter, &'static str> {
-    let manager = Manager::new().await.map_err(|e| {
-        log::warn!("BLE manager: {e}");
-        "no_adapter"
-    })?;
-    let adapters = manager.adapters().await.map_err(|_| "no_adapter")?;
+    let classify = |e: btleplug::Error| {
+        log::warn!("BLE adapter: {e}");
+        match e {
+            btleplug::Error::PermissionDenied => "no_permission",
+            _ => "no_adapter",
+        }
+    };
+    let manager = Manager::new().await.map_err(classify)?;
+    let adapters = manager.adapters().await.map_err(classify)?;
     adapters.into_iter().next().ok_or("no_adapter")
 }
 
@@ -88,36 +126,72 @@ async fn read_props(central: &Adapter, id: &PeripheralId, core: &Shared) {
     }
 }
 
-async fn scan_session(core: &Shared) -> Result<(), &'static str> {
-    let central = adapter().await?;
+async fn scan_session(core: &Shared, cached: &mut Option<Adapter>, watchdog_ms: u64) -> Result<End, &'static str> {
+    let central = match cached.as_ref() {
+        Some(a) if REUSE_ADAPTER => a.clone(),
+        _ => {
+            let a = adapter().await?;
+            if REUSE_ADAPTER {
+                *cached = Some(a.clone());
+            }
+            a
+        }
+    };
     let mut events = central.events().await.map_err(|_| "error")?;
-    central.start_scan(ScanFilter::default()).await.map_err(|e| {
-        log::warn!("BLE start_scan: {e}");
-        "error"
-    })?;
-    set_status(core, "scanning");
+
+    // Bluetooth may be switched off, or (macOS, first launch) still waiting for the
+    // permission prompt: the state then arrives later as a StateUpdate event.
+    let mut powered = central.adapter_state().await.unwrap_or(CentralState::Unknown) != CentralState::PoweredOff;
+    if powered {
+        central.start_scan(ScanFilter::default()).await.map_err(|e| {
+            log::warn!("BLE start_scan: {e}");
+            "error"
+        })?;
+        set_status(core, "scanning");
+    } else {
+        set_status(core, "bt_off");
+    }
 
     // Remember which peripherals are EcoFlow so RSSI updates are cheap to follow.
     let mut ecoflow: HashMap<PeripheralId, ()> = HashMap::new();
     let mut tick = tokio::time::interval(Duration::from_secs(30));
-    let session_start = now_ms();
+    let mut quiet_since = now_ms();
     let result = loop {
         tokio::select! {
-            _ = core.ble_restart.notified() => break Ok(()),
+            _ = core.ble_restart.notified() => break Ok(End::Requested),
             _ = tick.tick() => {
                 // Lets the popup notice devices going away / values getting old.
                 core.mark_changed();
-                // Some stacks stop scanning silently (e.g. after sleep). Calling start_scan
-                // again is not safe (on Windows btleplug adds another event handler each
-                // time), so when nothing EcoFlow was heard for a while, rebuild the session.
-                let last_adv = core.ble.lock().unwrap().devices.values().map(|d| d.last).max().unwrap_or(0);
-                if now_ms().saturating_sub(last_adv.max(session_start)) > WATCHDOG_MS {
-                    break Ok(());
+                if !powered {
+                    continue;
+                }
+                // Some stacks stop scanning silently (e.g. after sleep): when nothing
+                // EcoFlow was heard for a while, rebuild the session.
+                if now_ms().saturating_sub(last_advert(core).max(quiet_since)) > watchdog_ms {
+                    break Ok(End::Watchdog);
                 }
             }
             ev = events.next() => {
                 let Some(ev) = ev else { break Err("error") };
                 match ev {
+                    CentralEvent::StateUpdate(CentralState::PoweredOff) => {
+                        powered = false;
+                        set_status(core, "bt_off");
+                    }
+                    CentralEvent::StateUpdate(CentralState::PoweredOn) => {
+                        if REUSE_ADAPTER {
+                            // macOS: scanning must be (re)requested once the radio is ready.
+                            if central.start_scan(ScanFilter::default()).await.is_err() {
+                                break Err("error");
+                            }
+                            powered = true;
+                            quiet_since = now_ms();
+                            set_status(core, "scanning");
+                        } else if !powered {
+                            // Windows: the watcher was aborted with the radio; start over.
+                            break Ok(End::Requested);
+                        }
+                    }
                     CentralEvent::ManufacturerDataAdvertisement { id, manufacturer_data } => {
                         if let Some(data) = manufacturer_data.get(&MANUFACTURER_ID) {
                             ecoflow.insert(id.clone(), ());

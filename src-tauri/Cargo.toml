@@ -1,6 +1,6 @@
 [package]
 name = "station-battery"
-version = "1.0.1"
+version = "1.0.2"
 description = "Tray battery monitor for EcoFlow portable power stations"
 edition = "2021"
 publish = false

@@ -33,11 +33,24 @@
     return sn.length > 6 ? "…" + sn.slice(-4) : sn;
   }
 
-  function resize() {
-    requestAnimationFrame(() => {
+  // One measurement per frame, and only tell the backend when the height changed.
+  let resizePending = false;
+  let lastHeight = 0;
+  function resize(force) {
+    if (force) lastHeight = 0;
+    if (resizePending) return;
+    resizePending = true;
+    const run = () => {
+      if (!resizePending) return;
+      resizePending = false;
       const h = Math.ceil($("card").getBoundingClientRect().height);
+      if (h === lastHeight) return;
+      lastHeight = h;
       invoke("set_popup_height", { height: h }).catch(() => {});
-    });
+    };
+    // rAF is paused while the window is hidden; the timer makes sure it still runs.
+    requestAnimationFrame(run);
+    setTimeout(run, 120);
   }
 
   // ---------- main view ----------
@@ -74,9 +87,13 @@
       } else if (bleOn) {
         const seen = (s.devices || []).find((d) => d.sn === s.sn);
         if (s.bleStatus === "no_adapter") title = L.noAdapter;
-        else if (s.bleStatus === "error") title = L.bleError;
+        else if (s.bleStatus === "bt_off") title = L.btOff;
+        else if (s.bleStatus === "no_permission") {
+          title = L.noPermission;
+          hint = L.noPermissionHint;
+        } else if (s.bleStatus === "error") title = L.bleError;
         else if (seen && seen.soc == null) title = L.bleNoSoc;
-        if (cloudOn) hint = cloudText(s);
+        if (cloudOn && !hint) hint = cloudText(s);
         else if (seen && seen.soc == null) hint = L.useCloud;
       } else {
         title = L.viaCloud;
@@ -148,6 +165,7 @@
   }
 
   let snMode = false; // manual serial entry shown
+  let cloudDirty = false; // email / region edited but not submitted
 
   function renderDevices() {
     if (!sv || !snap) return;
@@ -166,6 +184,8 @@
 
     const sig = JSON.stringify(items) + "|" + cur + "|" + snMode;
     if (sel.dataset.sig === sig) return;
+    // Don't rebuild the list under the user's cursor; the next snapshot will do it.
+    if (document.activeElement === sel && sel.dataset.sig) return;
     sel.dataset.sig = sig;
     sel.innerHTML = "";
     items.forEach(([v, n]) => {
@@ -186,9 +206,12 @@
     $("bleEnabled").checked = s.bleEnabled;
     $("cloudEnabled").checked = s.cloudEnabled;
     $("cloudBox").classList.toggle("hidden", !s.cloudEnabled);
-    if (document.activeElement !== $("email")) $("email").value = s.cloudEmail;
+    // Keep what the user typed but has not submitted yet (other switches save instantly).
+    if (!cloudDirty) {
+      $("email").value = s.cloudEmail;
+      $("region").value = s.cloudRegion;
+    }
     $("password").placeholder = sv.hasPassword ? `${L.password} – ${L.passwordSaved}` : L.password;
-    $("region").value = s.cloudRegion;
     $("notifyLow").checked = s.notifyLow;
     $("lowThreshold").value = s.lowThreshold;
     $("thresholdVal").textContent = `${s.lowThreshold}%`;
@@ -217,10 +240,13 @@
       sv = await invoke("save_settings", { settings, password: password || null });
       renderSettings();
       resize();
+      return true;
     } catch (e) {
       const el = $("cloudStatus");
       el.textContent = e === "email" ? t().errEmail : String(e);
+      el.classList.remove("ok");
       el.classList.add("err");
+      return false;
     }
   }
 
@@ -230,6 +256,8 @@
     $("settingsView").classList.toggle("hidden", v !== "settings");
     if (v === "settings") {
       snMode = false;
+      cloudDirty = false;
+      $("password").value = "";
       $("deviceSelect").dataset.sig = "";
       renderSettings();
       $("scroll").scrollTop = 0;
@@ -291,6 +319,7 @@
       return;
     }
     snMode = false;
+    e.target.blur(); // lets the list refresh again (it is not rebuilt while focused)
     save({ deviceSn: v });
   };
   const commitSn = () => {
@@ -304,10 +333,16 @@
 
   $("bleEnabled").onchange = (e) => save({ bleEnabled: e.target.checked });
   $("cloudEnabled").onchange = (e) => save({ cloudEnabled: e.target.checked });
-  $("signIn").onclick = () => {
+  $("email").oninput = () => (cloudDirty = true);
+  $("region").onchange = () => (cloudDirty = true);
+  $("signIn").onclick = async () => {
     const pass = $("password").value;
-    $("password").value = "";
-    save({ cloudEmail: $("email").value.trim(), cloudRegion: $("region").value }, pass);
+    const ok = await save({ cloudEmail: $("email").value.trim(), cloudRegion: $("region").value }, pass);
+    if (ok) {
+      cloudDirty = false;
+      $("password").value = "";
+      renderSettings();
+    }
   };
   $("password").onkeydown = (e) => {
     if (e.key === "Enter") $("signIn").click();
@@ -333,10 +368,14 @@
     sv = settings;
     applySnapshot(s);
     setView(e.payload ? "settings" : "main");
+    resize(true);
   });
 
+  // While the popup is open, refresh from the backend so "updated … ago" is truthful
+  // (pushed snapshots are throttled; adverts arrive about once a second).
   setInterval(() => {
-    if (snap && view === "main") $("ago").textContent = snap.soc != null ? (snap.stale ? t().stale : fmtAgo(snap.updatedAt)) : "";
+    if (document.hidden) return;
+    invoke("get_snapshot").then(applySnapshot).catch(() => {});
   }, 5000);
 
   (async () => {

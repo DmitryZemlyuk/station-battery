@@ -28,6 +28,10 @@ struct AppState {
     last_blur_hide: AtomicU64,
     last_look: Mutex<Option<tray::TrayLook>>,
     menu_lang: Mutex<String>,
+    /// Where the visible popup is pinned (set each time it is shown).
+    anchor: Mutex<Option<tray::Anchor>>,
+    /// Last height requested by the popup (logical px); starts at the configured size.
+    popup_height: Mutex<f64>,
 }
 
 #[derive(Serialize)]
@@ -113,29 +117,18 @@ fn save_settings(
 }
 
 #[tauri::command]
-fn set_popup_height(window: WebviewWindow, height: f64) {
+fn set_popup_height(window: WebviewWindow, state: tauri::State<AppState>, height: f64) {
     let h = height.clamp(120.0, 640.0);
-    if let Ok(size) = window.inner_size() {
-        let scale = window.scale_factor().unwrap_or(1.0);
-        let w = size.width as f64 / scale;
-        let current = size.height as f64 / scale;
-        if (current - h).abs() > 0.5 {
-            // When the popup sits in the lower half of the screen (taskbar at the bottom),
-            // keep its bottom edge in place so it doesn't slide under the taskbar.
-            let anchored_bottom = match (window.outer_position(), window.current_monitor()) {
-                (Ok(pos), Ok(Some(m))) => {
-                    let mid = m.position().y as f64 + m.size().height as f64 / 2.0;
-                    (pos.y as f64 + size.height as f64 / 2.0) > mid
-                }
-                _ => false,
-            };
-            let old_pos = window.outer_position().ok();
-            let _ = window.set_size(tauri::LogicalSize::new(w, h));
-            if let (true, Some(p)) = (anchored_bottom, old_pos) {
-                let delta = ((h - current) * scale).round() as i32;
-                let _ = window.set_position(tauri::PhysicalPosition::new(p.x, p.y - delta));
-            }
-        }
+    *state.popup_height.lock().unwrap() = h;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let new_w = (tray::POPUP_WIDTH * scale).round() as u32;
+    let new_h = (h * scale).round() as u32;
+    let _ = window.set_size(tauri::PhysicalSize::new(new_w, new_h));
+    // Re-pin to the anchor chosen when the popup was shown. The target position depends
+    // only on the anchor and the new height, so repeated or racing calls cannot make
+    // the popup drift (a relative "move by the difference" did exactly that).
+    if let Some(anchor) = *state.anchor.lock().unwrap() {
+        let _ = window.set_position(tauri::PhysicalPosition::new(anchor.x, anchor.y_for(new_h as i32)));
     }
 }
 
@@ -151,7 +144,10 @@ fn quit_app(app: AppHandle) {
 
 fn show_popup<R: Runtime>(app: &AppHandle<R>, rect: Option<Rect>, open_settings: bool) {
     let Some(win) = tray::popup(app) else { return };
-    tray::place_popup(&win, rect);
+    let state = app.state::<AppState>();
+    let height = *state.popup_height.lock().unwrap();
+    let anchor = tray::place_popup(&win, rect, height);
+    *state.anchor.lock().unwrap() = anchor;
     let _ = win.show();
     let _ = win.set_focus();
     let _ = app.emit("popup-shown", open_settings);
@@ -270,6 +266,8 @@ fn main() {
                 last_blur_hide: AtomicU64::new(0),
                 last_look: Mutex::new(None),
                 menu_lang: Mutex::new(lang.clone()),
+                anchor: Mutex::new(None),
+                popup_height: Mutex::new(236.0),
             });
 
             let snap = core.snapshot();
