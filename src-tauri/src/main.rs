@@ -179,7 +179,8 @@ fn set_popup_height(window: WebviewWindow, state: tauri::State<AppState>, height
     // only on the anchor and the new height, so repeated or racing calls cannot make
     // the popup drift (a relative "move by the difference" did exactly that).
     if let Some(anchor) = *state.anchor.lock().unwrap() {
-        let _ = window.set_position(tauri::PhysicalPosition::new(anchor.x, anchor.y_for(new_h as i32)));
+        let (x, y) = anchor.window_pos(new_h as i32);
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     }
 }
 
@@ -234,13 +235,11 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
     let mut last = state.last_look.lock().unwrap();
     if last.as_ref() != Some(&look) {
         if cfg!(target_os = "macos") {
-            let _ = tray_icon.set_icon(Some(tray::render_battery_template(look.fill, look.charging)));
+            // The percentage is inside the battery glyph (like the system battery item);
+            // a separate title would use the large menu bar font.
+            let icon = tray::render_battery_template(Some(&look.text), look.fill, look.charging);
+            let _ = tray_icon.set_icon(Some(icon));
             let _ = tray_icon.set_icon_as_template(true);
-            let title = match snap.soc {
-                Some(soc) => format!("{soc}%"),
-                None => "–".to_string(),
-            };
-            let _ = tray_icon.set_title(Some(title));
         } else if state.core.settings().tray_style == "battery" {
             let _ = tray_icon.set_icon(Some(tray::render_battery_color(&look)));
         } else {
@@ -337,7 +336,7 @@ fn main() {
             let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
             let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale));
             let icon = if cfg!(target_os = "macos") {
-                tray::render_battery_template(None, false)
+                tray::render_battery_template(None, None, false)
             } else if core.settings().tray_style == "battery" {
                 tray::render_battery_color(&look)
             } else {
@@ -366,7 +365,7 @@ fn main() {
                     }
                 });
             if cfg!(target_os = "macos") {
-                builder = builder.icon_as_template(true).title("–");
+                builder = builder.icon_as_template(true);
             }
             builder.build(app)?;
 
