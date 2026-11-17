@@ -71,8 +71,34 @@ pub fn palette_shades(bytes: &[u8]) -> Option<(String, String)> {
     Some((hex(4), hex(1)))
 }
 
+/// Windows animates ordinary top-level windows when they are shown and hidden (a short
+/// zoom and fade). System flyouts, and borderless WinForms panels like Wheel Mixer,
+/// just appear: switch the transitions off so the popup does the same.
+#[cfg(windows)]
+pub fn disable_window_transitions<R: Runtime>(win: &WebviewWindow<R>) {
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(hwnd: *mut core::ffi::c_void, attr: u32, value: *const core::ffi::c_void, size: u32) -> i32;
+    }
+    const DWMWA_TRANSITIONS_FORCEDISABLED: u32 = 3;
+    if let Ok(hwnd) = win.hwnd() {
+        let on: i32 = 1;
+        // SAFETY: a valid window handle and a 4-byte BOOL, as the attribute expects.
+        let hr = unsafe {
+            DwmSetWindowAttribute(hwnd.0 as *mut core::ffi::c_void, DWMWA_TRANSITIONS_FORCEDISABLED, &on as *const i32 as *const _, 4)
+        };
+        if hr != 0 {
+            log::warn!("DwmSetWindowAttribute(TRANSITIONS_FORCEDISABLED) = {hr:#x}");
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn disable_window_transitions<R: Runtime>(_win: &WebviewWindow<R>) {}
+
 /// Material behind the tray popup.
 pub fn apply_popup_effects<R: Runtime>(win: &WebviewWindow<R>, info: &PlatformInfo) {
+    disable_window_transitions(win);
     if !info.backdrop {
         return;
     }

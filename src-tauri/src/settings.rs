@@ -22,6 +22,8 @@ pub struct Settings {
     /// Tray / menu bar item: "number" (percentage) | "battery" (glyph, Windows only)
     /// | "voltage" (grid voltage from the cloud; falls back to the percentage)
     pub tray_style: String,
+    /// Size of the digits in the tray / menu bar: "s" | "m" (like the system text) | "l" | "xl"
+    pub tray_digit_size: String,
     /// Last station picked automatically (keeps the cloud working when it leaves BLE range).
     pub last_seen_sn: String,
 }
@@ -40,6 +42,7 @@ impl Default for Settings {
             notify_full: true,
             autostart: false,
             tray_style: "number".into(),
+            tray_digit_size: "m".into(),
             last_seen_sn: String::new(),
         }
     }
@@ -55,6 +58,9 @@ impl Settings {
         }
         if !["number", "battery", "voltage"].contains(&self.tray_style.as_str()) {
             self.tray_style = "number".into();
+        }
+        if !["s", "m", "l", "xl"].contains(&self.tray_digit_size.as_str()) {
+            self.tray_digit_size = "m".into();
         }
         self.low_threshold = self.low_threshold.clamp(5, 90);
         self.cloud_email = self.cloud_email.trim().to_string();

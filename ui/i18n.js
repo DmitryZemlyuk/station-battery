@@ -1,5 +1,10 @@
 window.I18N = {
   uk: {
+    traySize: "Розмір цифр",
+    sizeS: "Дрібний",
+    sizeM: "Як у системі",
+    sizeL: "Великий",
+    sizeXL: "Дуже великий",
     signOut: "Вийти з акаунта",
     volts: "В",
     health: "Здоров’я батареї",
@@ -100,6 +105,11 @@ window.I18N = {
     errEmail: "Спершу вкажіть email",
   },
   ru: {
+    traySize: "Размер цифр",
+    sizeS: "Мелкий",
+    sizeM: "Как в системе",
+    sizeL: "Крупный",
+    sizeXL: "Очень крупный",
     signOut: "Выйти из аккаунта",
     volts: "В",
     health: "Здоровье батареи",
@@ -200,6 +210,11 @@ window.I18N = {
     errEmail: "Сначала укажите email",
   },
   en: {
+    traySize: "Digit size",
+    sizeS: "Small",
+    sizeM: "Like the system",
+    sizeL: "Large",
+    sizeXL: "Extra large",
     signOut: "Sign out",
     volts: "V",
     health: "Battery health",

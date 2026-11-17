@@ -78,7 +78,10 @@ the release for the version in `Cargo.toml`, and keeps only the three newest rel
   [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (Windows, MIT)
   and [Ionicons](https://ionic.io/ionicons) (macOS, MIT).
 - Tray icons are drawn at runtime from vectors at the exact pixel size of the tray.
-  Digits use a subset of [Inter](https://github.com/rsms/inter) SemiBold
-  (SIL OFL, `src-tauri/assets/OFL-Inter.txt`), sized like the taskbar / menu bar text.
+  Digits use subsets of [Inter](https://github.com/rsms/inter) (SIL OFL,
+  `src-tauri/assets/OFL-Inter.txt`): Regular in the Windows tray, like the taskbar text,
+  and SemiBold in the macOS menu bar. The digit size can be changed in the settings.
+- The popup appears and hides instantly on Windows (DWM window transitions are off for
+  it), like the system flyouts.
 
 Not affiliated with EcoFlow.

@@ -299,7 +299,7 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
     let state = app.state::<AppState>();
     let settings = state.core.settings();
     let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-    let look = tray::look(snap, settings.low_threshold, tray::tray_px(scale), &settings.tray_style);
+    let look = tray::look(snap, settings.low_threshold, tray::tray_px(scale), &settings.tray_style, &settings.tray_digit_size);
     // The unit sits next to the number on macOS, so a language change redraws it too.
     let unit = if snap.lang == "en" { "V" } else { "B" };
     let mut last = state.last_look.lock().unwrap();
@@ -310,8 +310,8 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
             // The number is part of the image (like the system battery item); a separate
             // title would use the large menu bar font.
             let icon = match look.kind {
-                tray::Kind::Voltage => tray::render_voltage_template(&look.text, unit),
-                tray::Kind::Percent => tray::render_battery_template(Some(&look.text), look.fill, look.charging),
+                tray::Kind::Voltage => tray::render_voltage_template(&look.text, unit, look.size),
+                tray::Kind::Percent => tray::render_battery_template(Some(&look.text), look.fill, look.charging, look.size),
             };
             let _ = tray_icon.set_icon(Some(icon));
             let _ = tray_icon.set_icon_as_template(true);
@@ -413,9 +413,9 @@ fn main() {
 
             let snap = core.snapshot();
             let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale), "number");
+            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale), "number", &core.settings().tray_digit_size);
             let icon = if cfg!(target_os = "macos") {
-                tray::render_battery_template(None, None, false)
+                tray::render_battery_template(None, None, false, "m")
             } else if core.settings().tray_style == "battery" {
                 tray::render_battery_color(&look)
             } else {

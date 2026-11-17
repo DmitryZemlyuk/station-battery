@@ -114,6 +114,9 @@
     $("lang").value = s.lang;
     // "battery" is not offered on macOS: show it as the default there.
     $("trayStyle").value = SB.isMac() && s.trayStyle === "battery" ? "number" : s.trayStyle;
+    $("traySize").value = s.trayDigitSize || "m";
+    // The Windows battery glyph has no digits, so its size setting would do nothing.
+    $("traySizeRow").classList.toggle("hidden", !SB.isMac() && s.trayStyle === "battery");
     $("trayHint").textContent = s.trayStyle === "voltage" ? L.trayVoltageHint : SB.isMac() ? "" : L.trayIconHint;
     $("version").textContent = `Station Battery ${sv.version}`;
     renderCloudStatus();
@@ -246,6 +249,7 @@
   $("lang").onchange = (e) => save({ lang: e.target.value });
   $("autostart").onchange = (e) => save({ autostart: e.target.checked });
   $("trayStyle").onchange = (e) => save({ trayStyle: e.target.value });
+  $("traySize").onchange = (e) => save({ trayDigitSize: e.target.value });
   $("quit").onclick = () => invoke("quit_app");
   document.addEventListener("contextmenu", (e) => {
     if (!(e.target instanceof HTMLInputElement)) e.preventDefault();

@@ -6,7 +6,11 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use tauri::image::Image;
 use tauri::{AppHandle, Manager, PhysicalPosition, Rect, Runtime, WebviewWindow};
 
+/// Digits-only subsets of Inter (SIL OFL). Regular for the Windows tray, matching the
+/// weight of the taskbar text; SemiBold for the macOS menu bar, where the digits are cut
+/// out of the battery and need sturdier strokes.
 static FONT: &[u8] = include_bytes!("../assets/digits.ttf");
+static FONT_REGULAR: &[u8] = include_bytes!("../assets/digits-regular.ttf");
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tone {
@@ -33,6 +37,8 @@ pub struct TrayLook {
     pub fill: Option<u8>,
     pub charging: bool,
     pub light_bar: bool,
+    /// Digit size setting ("s" | "m" | "l" | "xl").
+    pub size: &'static str,
     /// Icon size in physical pixels. The icon is drawn at exactly the size the tray
     /// shows it, because Windows scales a mismatched icon down into a blur.
     pub px: u32,
@@ -52,7 +58,28 @@ const VOLTS_OK: std::ops::RangeInclusive<i64> = 200..=253;
 
 /// `style` is the `tray_style` setting. "voltage" needs the cloud; without a reading
 /// the item falls back to the percentage instead of going blank.
-pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str) -> TrayLook {
+/// Normalises the setting to a static string (unknown values become "m").
+pub fn digit_size(setting: &str) -> &'static str {
+    match setting {
+        "s" => "s",
+        "l" => "l",
+        "xl" => "xl",
+        _ => "m",
+    }
+}
+
+/// How much bigger than "m" (the system text size) each setting is.
+pub fn size_factor(size: &str) -> f32 {
+    match size {
+        "s" => 8.0 / 9.0,
+        "l" => 10.0 / 9.0,
+        "xl" => 11.0 / 9.0,
+        _ => 1.0,
+    }
+}
+
+pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str, size: &str) -> TrayLook {
+    let size = digit_size(size);
     let light_bar = system_uses_light_theme();
     let charging = s.charging == Some(true);
     if style == "voltage" {
@@ -64,6 +91,7 @@ pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str) -> TrayLook {
                 fill: s.soc,
                 charging,
                 light_bar,
+                size,
                 px,
             };
         }
@@ -82,10 +110,11 @@ pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str) -> TrayLook {
             fill: Some(soc),
             charging,
             light_bar,
+            size,
             px,
         },
-        Some(soc) => TrayLook { kind: Kind::Percent, text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, px },
-        None => TrayLook { kind: Kind::Percent, text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, px },
+        Some(soc) => TrayLook { kind: Kind::Percent, text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, size, px },
+        None => TrayLook { kind: Kind::Percent, text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, size, px },
     }
 }
 
@@ -228,10 +257,11 @@ fn draw_digits(
     x - tracking
 }
 
-/// Digit height in the tray icon: the same as the taskbar's own text (Segoe UI 12 px
-/// at 100%, digits about 9 px), on whole pixels so the strokes stay crisp.
-pub fn tray_digit_height(px: u32) -> f32 {
-    (px as f32 * 0.5625).round().max(6.0)
+/// Digit height in the tray icon. "m" is the taskbar's own text (Segoe UI 12 px at
+/// 100%, digits about 9 px); the other sizes are a pixel apart at 100%. Whole pixels,
+/// so the strokes stay crisp.
+pub fn tray_digit_height(px: u32, size: &str) -> f32 {
+    (px as f32 * 0.5625 * size_factor(size)).round().max(6.0)
 }
 
 /// Windows / Linux: the number itself is the icon, drawn at the tray's pixel size.
@@ -241,12 +271,12 @@ pub fn render_number(l: &TrayLook) -> Image<'static> {
     let s = l.px.max(8);
     let sf32 = s as f32;
     let mut buf = vec![0u8; (s * s * 4) as usize];
-    let font = FontRef::try_from_slice(FONT).expect("font");
+    let font = FontRef::try_from_slice(FONT_REGULAR).expect("font");
     let [r, g, b] = color(l);
 
     // One pixel of air on each side, like the system's own tray icons. Three digits
     // (100%, voltage) get the whole width instead: there it is worth more than the air.
-    let target = tray_digit_height(s);
+    let target = tray_digit_height(s, l.size);
     let max_w = if l.text.chars().count() >= 3 { sf32 } else { sf32 - 2.0 };
     let (px, tracking) = fit_digits(&font, &l.text, target, max_w);
     let total_w = text_width(&font, &l.text, px, tracking);
@@ -306,11 +336,11 @@ pub fn render_battery_color(l: &TrayLook) -> Image<'static> {
 /// system battery item. The level is the solid part, the rest is dimmed, and the digits
 /// (plus a bolt while charging) are knocked out. Drawn at 3x of an 18 pt tall canvas;
 /// the width grows with the text.
-pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: bool) -> Image<'static> {
+pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: bool, size: &str) -> Image<'static> {
     const H: u32 = 54;
     let font = FontRef::try_from_slice(FONT).expect("font");
-    // Digits 21 px tall at 3x (7 pt), like the system battery's percentage.
-    let px = px_for_digit_height(&font, 21.0);
+    // Digits 21 px tall at 3x (7 pt) for "m", like the system battery's percentage.
+    let px = px_for_digit_height(&font, (21.0 * size_factor(size)).round());
     let text = text.filter(|_| fill.is_some());
     let text_w = text.map(|t| text_width(&font, t, px, 0.0)).unwrap_or(0.0);
     let bolt_w = if charging && text.is_some() { 13.0 } else { 0.0 };
@@ -378,12 +408,13 @@ pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: b
 
 /// macOS, voltage mode: a template image with a small bolt, the grid voltage and the
 /// unit ("V", or "B" which doubles as the Cyrillic "В"), in the same sans-serif digits.
-pub fn render_voltage_template(text: &str, unit: &str) -> Image<'static> {
+pub fn render_voltage_template(text: &str, unit: &str, size: &str) -> Image<'static> {
     const H: u32 = 54;
     let font = FontRef::try_from_slice(FONT).expect("font");
-    // Digits 27 px tall at 3x (9 pt, like menu bar text), the unit a bit smaller.
-    let px = px_for_digit_height(&font, 27.0);
-    let unit_px = px_for_digit_height(&font, 21.0);
+    // Digits 27 px tall at 3x (9 pt, like menu bar text) for "m", the unit a bit smaller.
+    let f = size_factor(size);
+    let px = px_for_digit_height(&font, (27.0 * f).round().min(39.0));
+    let unit_px = px_for_digit_height(&font, (21.0 * f).round().min(30.0));
     let (bolt_w, gap, unit_gap) = (13.0f32, 5.0f32, 4.0f32);
     let text_w = text_width(&font, text, px, 0.0);
     let unit_w = text_width(&font, unit, unit_px, 0.0);
@@ -727,36 +758,62 @@ mod tests {
     #[test]
     fn icons_have_the_requested_size_and_content() {
         for px in [16u32, 20, 24, 32] {
-            let l = TrayLook { kind: Kind::Percent, text: "78".into(), tone: Tone::Normal, fill: Some(78), charging: false, light_bar: false, px };
+            let l = TrayLook { kind: Kind::Percent, text: "78".into(), tone: Tone::Normal, fill: Some(78), charging: false, light_bar: false, size: "m", px };
             for img in [render_number(&l), render_battery_color(&l)] {
                 assert_eq!((img.width(), img.height()), (px, px));
                 assert!(img.rgba().chunks(4).filter(|p| p[3] > 128).count() > (px * px / 12) as usize);
             }
         }
         // macOS: 18 pt tall at 3x; never narrower with more content; digits are holes.
-        let t = render_battery_template(Some("50"), Some(50), false);
+        let t = render_battery_template(Some("50"), Some(50), false, "m");
         assert_eq!(t.height(), 54);
-        let wide = render_battery_template(Some("100"), Some(100), true);
+        let wide = render_battery_template(Some("100"), Some(100), true, "m");
         assert!(wide.width() >= t.width());
         let solid = |img: &Image| img.rgba().chunks(4).filter(|p| p[3] > 200).count();
-        assert!(solid(&render_battery_template(None, Some(100), false)) > solid(&render_battery_template(Some("100"), Some(100), false)));
+        assert!(solid(&render_battery_template(None, Some(100), false, "m")) > solid(&render_battery_template(Some("100"), Some(100), false, "m")));
         // No data: an empty outline, no digits.
-        let empty = render_battery_template(Some("–"), None, false);
+        let empty = render_battery_template(Some("–"), None, false, "m");
         assert_eq!(empty.width(), t.width());
         assert_eq!(solid(&empty), 0);
         assert_eq!(tray_px(1.0), if cfg!(windows) { 16 } else { 24 });
-        let v = render_voltage_template("228", "V");
+        let v = render_voltage_template("228", "V", "m");
         assert_eq!(v.height(), 54);
         assert!(v.width() > 60 && v.rgba().chunks(4).any(|p| p[3] > 200));
     }
 
     #[test]
     fn font_subset_has_every_glyph_we_draw() {
-        let font = FontRef::try_from_slice(FONT).unwrap();
-        for ch in "0123456789–VB".chars() {
-            assert_ne!(font.glyph_id(ch).0, 0, "missing glyph for {ch:?}");
-            assert!(font.as_scaled(PxScale::from(20.0)).h_advance(font.glyph_id(ch)) > 1.0);
+        for data in [FONT, FONT_REGULAR] {
+            let font = FontRef::try_from_slice(data).unwrap();
+            for ch in "0123456789–VB".chars() {
+                assert_ne!(font.glyph_id(ch).0, 0, "missing glyph for {ch:?}");
+                assert!(font.as_scaled(PxScale::from(20.0)).h_advance(font.glyph_id(ch)) > 1.0);
+            }
         }
+    }
+
+    #[test]
+    fn digit_size_setting_scales_every_icon() {
+        // Windows: one pixel per step at 100%, and still fits at the largest size.
+        let heights: Vec<f32> = ["s", "m", "l", "xl"].iter().map(|z| tray_digit_height(16, z)).collect();
+        assert_eq!(heights, vec![8.0, 9.0, 10.0, 11.0]);
+        assert_eq!(tray_digit_height(16, "nonsense"), 9.0);
+        for z in ["s", "m", "l", "xl"] {
+            for text in ["78", "100", "228"] {
+                let l = TrayLook { kind: Kind::Percent, text: text.into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, size: digit_size(z), px: 16 };
+                let (rows, cols) = ink(&render_number(&l));
+                assert!(!rows.is_empty() && !cols.is_empty(), "{text}/{z} drew nothing");
+            }
+        }
+        let tall = |img: &Image| ink(img).0.len();
+        let two = |z: &str| TrayLook { kind: Kind::Percent, text: "78".into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, size: digit_size(z), px: 16 };
+        assert!(tall(&render_number(&two("s"))) < tall(&render_number(&two("xl"))));
+        // macOS: bigger digits, wider (or equal) items; always 18 pt tall.
+        let small = render_battery_template(Some("78"), Some(78), false, "s");
+        let big = render_battery_template(Some("100"), Some(100), true, "xl");
+        assert_eq!((small.height(), big.height()), (54, 54));
+        assert!(big.width() >= small.width());
+        assert!(render_voltage_template("228", "B", "xl").width() > render_voltage_template("228", "B", "s").width());
     }
 
     fn snap(soc: Option<u8>, volts: Option<i64>) -> Snapshot {
@@ -765,18 +822,18 @@ mod tests {
 
     #[test]
     fn voltage_style_shows_volts_and_falls_back_to_percent() {
-        let l = look(&snap(Some(78), Some(228)), 20, 16, "voltage");
+        let l = look(&snap(Some(78), Some(228)), 20, 16, "voltage", "m");
         assert_eq!((l.kind, l.text.as_str(), l.tone), (Kind::Voltage, "228", Tone::Normal));
         // No grid, or far out of range: flagged.
-        assert_eq!(look(&snap(Some(78), Some(0)), 20, 16, "voltage").tone, Tone::Low);
-        assert_eq!(look(&snap(Some(78), Some(262)), 20, 16, "voltage").tone, Tone::Low);
-        assert_eq!(look(&snap(Some(78), Some(205)), 20, 16, "voltage").tone, Tone::Normal);
+        assert_eq!(look(&snap(Some(78), Some(0)), 20, 16, "voltage", "m").tone, Tone::Low);
+        assert_eq!(look(&snap(Some(78), Some(262)), 20, 16, "voltage", "m").tone, Tone::Low);
+        assert_eq!(look(&snap(Some(78), Some(205)), 20, 16, "voltage", "m").tone, Tone::Normal);
         // No reading (cloud off): the percentage instead of a blank item.
-        let l = look(&snap(Some(78), None), 20, 16, "voltage");
+        let l = look(&snap(Some(78), None), 20, 16, "voltage", "m");
         assert_eq!((l.kind, l.text.as_str()), (Kind::Percent, "78"));
         // Other styles never show volts.
-        assert_eq!(look(&snap(Some(78), Some(228)), 20, 16, "number").kind, Kind::Percent);
-        assert_eq!(look(&snap(None, None), 20, 16, "voltage").text, "–");
+        assert_eq!(look(&snap(Some(78), Some(228)), 20, 16, "number", "m").kind, Kind::Percent);
+        assert_eq!(look(&snap(None, None), 20, 16, "voltage", "m").text, "–");
     }
 
     fn ink(img: &Image) -> (Vec<u32>, Vec<u32>) {
@@ -790,8 +847,8 @@ mod tests {
     #[test]
     fn digits_match_the_taskbar_text_and_fit() {
         for px in [16u32, 20, 24, 32] {
-            let target = tray_digit_height(px) as u32;
-            let mk = |text: &str| TrayLook { kind: Kind::Percent, text: text.into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, px };
+            let target = tray_digit_height(px, "m") as u32;
+            let mk = |text: &str| TrayLook { kind: Kind::Percent, text: text.into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, size: "m", px };
             // One and two digits: the taskbar text height (±1 px of anti-aliasing), centred.
             for text in ["5", "14", "78", "88"] {
                 let (rows, cols) = ink(&render_number(&mk(text)));
@@ -813,7 +870,7 @@ mod tests {
 
     #[test]
     fn fit_digits_tightens_before_shrinking() {
-        let font = FontRef::try_from_slice(FONT).unwrap();
+        let font = FontRef::try_from_slice(FONT_REGULAR).unwrap();
         let full = px_for_digit_height(&font, 9.0);
         // Two digits fit as they are.
         assert_eq!(fit_digits(&font, "78", 9.0, 16.0), (full, 0.0));
@@ -839,7 +896,7 @@ mod tests {
                     ("5", Tone::Charging, Some(5), true),
                     ("–", Tone::Dim, None, false),
                 ] {
-                    let l = TrayLook { kind: Kind::Percent, text: text.into(), tone, fill, charging, light_bar, px };
+                    let l = TrayLook { kind: Kind::Percent, text: text.into(), tone, fill, charging, light_bar, size: "m", px };
                     for (kind, img) in [("num", render_number(&l)), ("bat", render_battery_color(&l))] {
                         let theme = if light_bar { "light" } else { "dark" };
                         let path = format!("{dir}/{px:02}-{theme}-{n:03}-{kind}-{}x{}.rgba", img.width(), img.height());
@@ -851,18 +908,30 @@ mod tests {
         }
         for px in [16u32, 24] {
             for (j, (v, tone)) in [("228", Tone::Normal), ("0", Tone::Low), ("253", Tone::Normal)].iter().enumerate() {
-                let l = TrayLook { kind: Kind::Voltage, text: (*v).into(), tone: *tone, fill: None, charging: false, light_bar: false, px };
+                let l = TrayLook { kind: Kind::Voltage, text: (*v).into(), tone: *tone, fill: None, charging: false, light_bar: false, size: "m", px };
                 let img = render_number(&l);
                 std::fs::write(format!("{dir}/volt-{px:02}-{j}-{}x{}.rgba", img.width(), img.height()), img.rgba()).unwrap();
             }
         }
+        for px in [16u32, 24] {
+            for z in ["s", "m", "l", "xl"] {
+                for (k, text) in ["78", "100", "14", "228"].iter().enumerate() {
+                    for light_bar in [false, true] {
+                        let l = TrayLook { kind: Kind::Percent, text: (*text).into(), tone: Tone::Normal, fill: None, charging: false, light_bar, size: z, px };
+                        let img = render_number(&l);
+                        let theme = if light_bar { "light" } else { "dark" };
+                        std::fs::write(format!("{dir}/size-{px:02}-{z}-{theme}-{k}-{}x{}.rgba", img.width(), img.height()), img.rgba()).unwrap();
+                    }
+                }
+            }
+        }
         for (j, (v, u)) in [("228", "V"), ("228", "B"), ("0", "B")].iter().enumerate() {
-            let t = render_voltage_template(v, u);
+            let t = render_voltage_template(v, u, "m");
             std::fs::write(format!("{dir}/macv-{j}-{}x{}.rgba", t.width(), t.height()), t.rgba()).unwrap();
         }
         for (i, (fill, ch)) in [(Some(78u8), false), (Some(78), true), (Some(14), false), (Some(100), false), (Some(100), true), (Some(5), true), (None, false)].iter().enumerate() {
             let text = fill.map(|v| v.to_string());
-            let t = render_battery_template(text.as_deref(), *fill, *ch);
+            let t = render_battery_template(text.as_deref(), *fill, *ch, "m");
             std::fs::write(format!("{dir}/mac-{i}-{}x{}.rgba", t.width(), t.height()), t.rgba()).unwrap();
         }
     }
