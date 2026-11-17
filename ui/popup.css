@@ -71,3 +71,6 @@ html.mac:not(.backdrop) .card { background: var(--solid-panel); border-radius: 1
 .m-kbd { color: var(--text2); }
 .m-item:hover { background: var(--accent); color: #fff; }
 .m-item:hover .m-kbd { color: rgba(255, 255, 255, 0.75); }
+
+/* While the popup is being prepared, values snap to their state instead of animating. */
+.card.instant .ring-arc, .card.instant .m-fill { transition: none; }

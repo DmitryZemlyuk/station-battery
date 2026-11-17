@@ -210,12 +210,13 @@ fn show_popup<R: Runtime>(app: &AppHandle<R>, rect: Option<Rect>) {
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(300));
-        reveal(&app, id, None);
+        let _ = reveal(&app, id, None);
     });
 }
 
 /// Shows the popup for show request `id` (once; later calls for the same id do nothing).
-fn reveal<R: Runtime>(app: &AppHandle<R>, id: u64, height: Option<f64>) {
+/// Returns whether this call showed it.
+fn reveal<R: Runtime>(app: &AppHandle<R>, id: u64, height: Option<f64>) -> bool {
     let state = app.state::<AppState>();
     let rect = {
         let mut pending = state.pending_show.lock().unwrap();
@@ -224,11 +225,10 @@ fn reveal<R: Runtime>(app: &AppHandle<R>, id: u64, height: Option<f64>) {
                 *pending = None;
                 rect
             }
-            _ => return,
+            _ => return false,
         }
     };
-    let Some(win) = tray::popup(app) else { return };
-    let scale = win.scale_factor().unwrap_or(1.0);
+    let Some(win) = tray::popup(app) else { return false };
     let h = {
         let mut ph = state.popup_height.lock().unwrap();
         if let Some(h) = height {
@@ -236,20 +236,23 @@ fn reveal<R: Runtime>(app: &AppHandle<R>, id: u64, height: Option<f64>) {
         }
         *ph
     };
-    let _ = win.set_size(tauri::PhysicalSize::new(
-        (tray::popup_width() * scale).round() as u32,
-        (h * scale).round() as u32,
-    ));
+    // Position first (computed for the monitor that holds the tray icon), then a
+    // logical size, so the size follows that monitor's scale and not the one the
+    // hidden window was last on.
     let anchor = tray::place_popup(&win, rect, h);
     *state.anchor.lock().unwrap() = anchor;
+    let _ = win.set_size(tauri::LogicalSize::new(tray::popup_width(), h));
     let _ = win.show();
     let _ = win.set_focus();
+    true
 }
 
-/// The page has rendered for show request `id` and measured itself.
+/// The page has rendered for show request `id` and measured itself. Returns false when
+/// the request was already served (the fallback timer showed the window first): the
+/// page then sends its height the ordinary way.
 #[tauri::command]
-fn reveal_popup(app: AppHandle, id: u64, height: f64) {
-    reveal(&app, id, Some(height));
+fn reveal_popup(app: AppHandle, id: u64, height: f64) -> bool {
+    reveal(&app, id, Some(height))
 }
 
 /// Forgets the saved EcoFlow password (signs out of the cloud).

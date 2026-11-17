@@ -195,13 +195,26 @@
   // shadow jump). Layout works in a hidden page; only animation frames are paused.
   listen("popup-prepare", async (e) => {
     const id = e.payload;
-    let height = Math.ceil($("card").getBoundingClientRect().height);
+    const card = $("card");
+    // Draw the current values without animating from the old ones: the window is
+    // hidden, so an animation started now would play out after it appears.
+    card.classList.add("instant");
+    let height = Math.ceil(card.getBoundingClientRect().height);
     try {
       apply(await invoke("get_snapshot"));
-      height = Math.ceil($("card").getBoundingClientRect().height);
-      lastHeight = height;
+      height = Math.ceil(card.getBoundingClientRect().height);
     } finally {
-      invoke("reveal_popup", { id, height }).catch(() => {});
+      let shown = false;
+      try {
+        shown = await invoke("reveal_popup", { id, height });
+      } catch (err) {}
+      if (shown) {
+        lastHeight = height;
+      } else {
+        // Shown by the fallback at the previous height: correct it now.
+        resize(true);
+      }
+      setTimeout(() => card.classList.remove("instant"), 600);
     }
     SB.initPlatform(); // picks up a changed Windows accent colour
   });
