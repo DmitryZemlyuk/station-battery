@@ -254,11 +254,10 @@ fn fit_digits(font: &FontRef, text: &str, digit_h: f32, max_w: f32, spacing: f32
     }
 }
 
-/// Letter spacing in the Windows tray: about 1 px at 100% (a touch looser than the
-/// font's default, which looks cramped at 9 px), in whole pixels so every digit
-/// lands on the same sub-pixel phase.
+/// Letter spacing in the Windows tray: half a pixel at 100% (a touch looser than the
+/// font's default, which looks cramped at 9 px), 1 px at 150% and 200%.
 pub fn tray_spacing(px: u32) -> f32 {
-    (px as f32 / 16.0).round().max(1.0)
+    (px as f32 / 16.0).round().max(1.0) / 2.0
 }
 
 /// Draws `text` with its digits centred in `w`×`h` (or starting at `x0` when given),
@@ -920,7 +919,7 @@ mod tests {
         assert!(tr <= 0.0 && tr >= -0.09 * px - 1e-4);
         assert!(px <= full);
         assert!(ink_span(&font, "100", px, tr).1 <= 16.0 + 1e-3);
-        assert_eq!((tray_spacing(16), tray_spacing(24), tray_spacing(32)), (1.0, 2.0, 2.0));
+        assert_eq!((tray_spacing(16), tray_spacing(24), tray_spacing(32)), (0.5, 1.0, 1.0));
     }
 
     #[test]
