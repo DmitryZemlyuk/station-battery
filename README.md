@@ -98,4 +98,18 @@ the release for the version in `Cargo.toml`, and keeps only the three newest rel
 - The popup appears and hides instantly on Windows (DWM window transitions are off for
   it), like the system flyouts.
 
-Not affiliated with EcoFlow.
+## Disclaimer
+
+This is an unofficial hobby project, not affiliated with, endorsed by or supported by
+EcoFlow. It uses EcoFlow's Bluetooth advertisements and the cloud endpoints of the EcoFlow
+app, which are undocumented and may change or stop working at any time.
+
+The software is provided "as is", without warranty of any kind, express or implied,
+including but not limited to the warranties of merchantability, fitness for a particular
+purpose and non-infringement. In no event shall the authors be liable for any claim,
+damages or other liability, whether in an action of contract, tort or otherwise, arising
+from, out of or in connection with the software or its use, including any damage to your
+computer, your power station or other equipment, loss of data, or problems with your
+EcoFlow account.
+
+Use it entirely at your own risk.
