@@ -141,8 +141,8 @@ fn rasterize(svg: &str, w: u32, h: u32) -> Image<'static> {
 /// Vertical extent of the digits at a font size, as (top, bottom) offsets from the
 /// baseline in pixels (top is positive, bottom is the small overshoot below it).
 /// Taken from the outline of "0" in font units, so there is no pixel rounding in it.
-/// The font is a digits-only subset of Barlow Condensed Bold: sans-serif, and narrow
-/// enough for three digits in a 16 px tray icon.
+/// The font is a digits-only subset of Inter SemiBold (SIL OFL): the closest freely
+/// embeddable match to Segoe UI on Windows and SF on macOS.
 fn digit_extent(font: &FontRef, px: f32) -> (f32, f32) {
     let factor = px / font.height_unscaled();
     match font.outline(font.glyph_id('0')) {
@@ -157,7 +157,86 @@ fn centred_baseline(font: &FontRef, px: f32, top: f32, height: f32) -> f32 {
     (top + height / 2.0 + (up + down) / 2.0).round()
 }
 
+/// Font size (ab_glyph pixel scale) at which the digits are `h` pixels tall.
+fn px_for_digit_height(font: &FontRef, h: f32) -> f32 {
+    let (up, down) = digit_extent(font, 1.0);
+    h / (up - down).max(0.1)
+}
+
+/// Pen advances for `text` at `px` with `tracking` pixels added between characters.
+fn text_width(font: &FontRef, text: &str, px: f32, tracking: f32) -> f32 {
+    let sf = font.as_scaled(PxScale::from(px));
+    let n = text.chars().count();
+    let adv: f32 = text.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum();
+    adv + tracking * n.saturating_sub(1) as f32
+}
+
+/// Size and letter spacing for `text` so the digits are `digit_h` tall and the line
+/// fits in `max_w`: first the spacing is tightened a little, then the size shrinks.
+fn fit_digits(font: &FontRef, text: &str, digit_h: f32, max_w: f32) -> (f32, f32) {
+    let mut px = px_for_digit_height(font, digit_h);
+    let min_px = px * 0.55;
+    loop {
+        // Up to 9% of the size per gap (about 1 px at tray sizes) of tighter spacing.
+        let min_tracking = -0.09 * px;
+        let natural = text_width(font, text, px, 0.0);
+        let gaps = text.chars().count().saturating_sub(1) as f32;
+        if natural <= max_w {
+            return (px, 0.0);
+        }
+        if gaps > 0.0 {
+            let need = (max_w - natural) / gaps;
+            if need >= min_tracking {
+                return (px, need);
+            }
+        }
+        if px <= min_px {
+            return (px, min_tracking);
+        }
+        px -= 0.25;
+    }
+}
+
+/// Draws `text` with its digits centred in `w`×`h` (or starting at `x0` when given),
+/// calling `put(x, y, coverage)` for each touched pixel. Returns the pen end x.
+fn draw_digits(
+    font: &FontRef,
+    text: &str,
+    px: f32,
+    tracking: f32,
+    x0: f32,
+    baseline: f32,
+    (w, h): (u32, u32),
+    mut put: impl FnMut(u32, u32, f32),
+) -> f32 {
+    let sf = font.as_scaled(PxScale::from(px));
+    let mut x = x0;
+    for ch in text.chars() {
+        let id = sf.glyph_id(ch);
+        let glyph = id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, baseline));
+        x += sf.h_advance(id) + tracking;
+        if let Some(outlined) = font.outline_glyph(glyph) {
+            let bb = outlined.px_bounds();
+            outlined.draw(|gx, gy, cov| {
+                let (px_x, px_y) = (bb.min.x as i32 + gx as i32, bb.min.y as i32 + gy as i32);
+                if px_x >= 0 && px_y >= 0 && (px_x as u32) < w && (px_y as u32) < h {
+                    put(px_x as u32, px_y as u32, cov.clamp(0.0, 1.0));
+                }
+            });
+        }
+    }
+    x - tracking
+}
+
+/// Digit height in the tray icon: the same as the taskbar's own text (Segoe UI 12 px
+/// at 100%, digits about 9 px), on whole pixels so the strokes stay crisp.
+pub fn tray_digit_height(px: u32) -> f32 {
+    (px as f32 * 0.5625).round().max(6.0)
+}
+
 /// Windows / Linux: the number itself is the icon, drawn at the tray's pixel size.
+/// Digits match the taskbar text size; three digits get tighter spacing and, only if
+/// still too wide, a smaller size.
 pub fn render_number(l: &TrayLook) -> Image<'static> {
     let s = l.px.max(8);
     let sf32 = s as f32;
@@ -165,46 +244,24 @@ pub fn render_number(l: &TrayLook) -> Image<'static> {
     let font = FontRef::try_from_slice(FONT).expect("font");
     let [r, g, b] = color(l);
 
-    // The biggest size that fits the width; two digits are limited by the height.
-    let width_at = |px: f32| {
-        let sf = font.as_scaled(PxScale::from(px));
-        l.text.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum::<f32>()
-    };
-    let mut px = sf32 * 1.12;
-    while px > 6.0 && width_at(px) > sf32 {
-        px -= 0.25;
-    }
-    let sf = font.as_scaled(PxScale::from(px));
-    let total_w = width_at(px);
-    // Digits have no descenders: centre their height, on a whole pixel so the
-    // horizontal strokes stay sharp.
+    // One pixel of air on each side, like the system's own tray icons. Three digits
+    // (100%, voltage) get the whole width instead: there it is worth more than the air.
+    let target = tray_digit_height(s);
+    let max_w = if l.text.chars().count() >= 3 { sf32 } else { sf32 - 2.0 };
+    let (px, tracking) = fit_digits(&font, &l.text, target, max_w);
+    let total_w = text_width(&font, &l.text, px, tracking);
     let baseline = centred_baseline(&font, px, 0.0, sf32);
-    let mut x = (sf32 - total_w) / 2.0;
-
-    for ch in l.text.chars() {
-        let id = sf.glyph_id(ch);
-        let glyph = id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, baseline));
-        x += sf.h_advance(id);
-        if let Some(outlined) = font.outline_glyph(glyph) {
-            let bb = outlined.px_bounds();
-            outlined.draw(|gx, gy, cov| {
-                let px_x = bb.min.x as i32 + gx as i32;
-                let px_y = bb.min.y as i32 + gy as i32;
-                if px_x < 0 || px_y < 0 || px_x >= s as i32 || px_y >= s as i32 {
-                    return;
-                }
-                let i = ((px_y as u32 * s + px_x as u32) * 4) as usize;
-                // A slight gamma lift keeps thin strokes legible at 16 px.
-                let a = (cov.clamp(0.0, 1.0).powf(0.8) * 255.0) as u8;
-                if a > buf[i + 3] {
-                    buf[i] = r;
-                    buf[i + 1] = g;
-                    buf[i + 2] = b;
-                    buf[i + 3] = a;
-                }
-            });
+    let x0 = ((sf32 - total_w) / 2.0).round();
+    draw_digits(&font, &l.text, px, tracking, x0, baseline, (s, s), |x, y, cov| {
+        let i = ((y * s + x) * 4) as usize;
+        let a = (cov.powf(0.85) * 255.0) as u8;
+        if a > buf[i + 3] {
+            buf[i] = r;
+            buf[i + 1] = g;
+            buf[i + 2] = b;
+            buf[i + 3] = a;
         }
-    }
+    });
     Image::new_owned(buf, s, s)
 }
 
@@ -251,11 +308,11 @@ pub fn render_battery_color(l: &TrayLook) -> Image<'static> {
 /// the width grows with the text.
 pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: bool) -> Image<'static> {
     const H: u32 = 54;
-    const PX: f32 = 33.0; // digit size: 11 pt
     let font = FontRef::try_from_slice(FONT).expect("font");
-    let sf = font.as_scaled(PxScale::from(PX));
+    // Digits 21 px tall at 3x (7 pt), like the system battery's percentage.
+    let px = px_for_digit_height(&font, 21.0);
     let text = text.filter(|_| fill.is_some());
-    let text_w: f32 = text.map(|t| t.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum()).unwrap_or(0.0);
+    let text_w = text.map(|t| text_width(&font, t, px, 0.0)).unwrap_or(0.0);
     let bolt_w = if charging && text.is_some() { 13.0 } else { 0.0 };
     let gap = if bolt_w > 0.0 { 2.0 } else { 0.0 };
     let content = text_w + gap + bolt_w;
@@ -295,23 +352,11 @@ pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: b
 
     // Coverage of everything that is knocked out of the battery.
     let mut punch = vec![0f32; (w * H) as usize];
-    let mut x = bx + (body_w - content) / 2.0;
-    let baseline = centred_baseline(&font, PX, by, bh);
-    for ch in text.chars() {
-        let id = sf.glyph_id(ch);
-        let glyph = id.with_scale_and_position(PxScale::from(PX), ab_glyph::point(x, baseline));
-        x += sf.h_advance(id);
-        if let Some(outlined) = font.outline_glyph(glyph) {
-            let bb = outlined.px_bounds();
-            outlined.draw(|gx, gy, cov| {
-                let (px_x, px_y) = (bb.min.x as i32 + gx as i32, bb.min.y as i32 + gy as i32);
-                if px_x >= 0 && px_y >= 0 && (px_x as u32) < w && (px_y as u32) < H {
-                    let i = (px_y as u32 * w + px_x as u32) as usize;
-                    punch[i] = punch[i].max(cov.clamp(0.0, 1.0));
-                }
-            });
-        }
-    }
+    let baseline = centred_baseline(&font, px, by, bh);
+    let x = draw_digits(&font, text, px, 0.0, bx + (body_w - content) / 2.0, baseline, (w, H), |x, y, cov| {
+        let i = (y * w + x) as usize;
+        punch[i] = punch[i].max(cov);
+    });
     if bolt_w > 0.0 {
         // BOLT spans x 5.2..10.3, y 3.2..12.8 on its 16-unit grid; 2.5x makes it 24 px tall.
         let (tx, ty) = (x + gap - 5.2 * 2.5, 15.0 - 3.2 * 2.5);
@@ -335,18 +380,15 @@ pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: b
 /// unit ("V", or "B" which doubles as the Cyrillic "В"), in the same sans-serif digits.
 pub fn render_voltage_template(text: &str, unit: &str) -> Image<'static> {
     const H: u32 = 54;
-    const PX: f32 = 39.0; // 13 pt
-    const UNIT_PX: f32 = 30.0;
     let font = FontRef::try_from_slice(FONT).expect("font");
-    let advance = |t: &str, px: f32| {
-        let sf = font.as_scaled(PxScale::from(px));
-        t.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum::<f32>()
-    };
-    let (bolt_w, gap) = (13.0f32, 5.0f32);
-    let text_w = advance(text, PX);
-    let unit_w = advance(unit, UNIT_PX);
-    let w = (3.0 + bolt_w + gap + text_w + 3.0 + unit_w + 3.0).ceil() as u32;
-    let baseline = centred_baseline(&font, PX, 0.0, H as f32);
+    // Digits 27 px tall at 3x (9 pt, like menu bar text), the unit a bit smaller.
+    let px = px_for_digit_height(&font, 27.0);
+    let unit_px = px_for_digit_height(&font, 21.0);
+    let (bolt_w, gap, unit_gap) = (13.0f32, 5.0f32, 4.0f32);
+    let text_w = text_width(&font, text, px, 0.0);
+    let unit_w = text_width(&font, unit, unit_px, 0.0);
+    let w = (3.0 + bolt_w + gap + text_w + unit_gap + unit_w + 3.0).ceil() as u32;
+    let baseline = centred_baseline(&font, px, 0.0, H as f32);
 
     // Bolt first (BOLT spans x 5.2..10.3, y 3.2..12.8; 2.6x makes it 25 px tall).
     let (tx, ty) = (3.0 - 5.2 * 2.6, (H as f32 - 25.0) / 2.0 - 3.2 * 2.6);
@@ -354,27 +396,12 @@ pub fn render_voltage_template(text: &str, unit: &str) -> Image<'static> {
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {H}" width="{w}" height="{H}"><path d="{BOLT}" fill="black" transform="translate({tx} {ty}) scale(2.6)"/></svg>"#
     );
     let mut buf = rasterize(&bolt, w, H).rgba().to_vec();
-
-    let mut x = 3.0 + bolt_w + gap;
-    for (t, px) in [(text, PX), (unit, UNIT_PX)] {
-        let sf = font.as_scaled(PxScale::from(px));
-        for ch in t.chars() {
-            let id = sf.glyph_id(ch);
-            let glyph = id.with_scale_and_position(PxScale::from(px), ab_glyph::point(x, baseline));
-            x += sf.h_advance(id);
-            if let Some(outlined) = font.outline_glyph(glyph) {
-                let bb = outlined.px_bounds();
-                outlined.draw(|gx, gy, cov| {
-                    let (px_x, px_y) = (bb.min.x as i32 + gx as i32, bb.min.y as i32 + gy as i32);
-                    if px_x >= 0 && px_y >= 0 && (px_x as u32) < w && (px_y as u32) < H {
-                        let i = ((px_y as u32 * w + px_x as u32) * 4 + 3) as usize;
-                        buf[i] = buf[i].max((cov.clamp(0.0, 1.0) * 255.0) as u8);
-                    }
-                });
-            }
-        }
-        x += 3.0;
-    }
+    let mut put = |x: u32, y: u32, cov: f32| {
+        let i = ((y * w + x) * 4 + 3) as usize;
+        buf[i] = buf[i].max((cov * 255.0) as u8);
+    };
+    let end = draw_digits(&font, text, px, 0.0, 3.0 + bolt_w + gap, baseline, (w, H), &mut put);
+    draw_digits(&font, unit, unit_px, 0.0, end + unit_gap, baseline, (w, H), &mut put);
     Image::new_owned(buf, w, H)
 }
 
@@ -752,26 +779,51 @@ mod tests {
         assert_eq!(look(&snap(None, None), 20, 16, "voltage").text, "–");
     }
 
+    fn ink(img: &Image) -> (Vec<u32>, Vec<u32>) {
+        let (w, h) = (img.width(), img.height());
+        let rgba = img.rgba();
+        let rows = (0..h).filter(|y| (0..w).any(|x| rgba[((y * w + x) * 4 + 3) as usize] > 90)).collect();
+        let cols = (0..w).filter(|x| (0..h).any(|y| rgba[((y * w + x) * 4 + 3) as usize] > 90)).collect();
+        (rows, cols)
+    }
+
     #[test]
-    fn three_digits_fit_the_tray_width() {
-        // Every opaque pixel must be inside the icon: nothing is clipped at the sides.
-        for (text, px) in [("100", 16u32), ("228", 16), ("253", 20), ("78", 16)] {
-            let l = TrayLook { kind: Kind::Voltage, text: text.into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, px };
-            let img = render_number(&l);
-            let rgba = img.rgba();
-            let col_used = |x: u32| (0..px).any(|y| rgba[((y * px + x) * 4 + 3) as usize] > 40);
-            let row_used = |y: u32| (0..px).any(|x| rgba[((y * px + x) * 4 + 3) as usize] > 40);
-            let (rows, cols): (Vec<u32>, Vec<u32>) = ((0..px).filter(|y| row_used(*y)).collect(), (0..px).filter(|x| col_used(*x)).collect());
-            let height = rows.last().unwrap() - rows.first().unwrap() + 1;
-            // Tall enough to read, and vertically centred within a pixel.
-            assert!(height * 2 >= px, "{text}@{px}: {height}px tall");
-            let (top, bottom) = (*rows.first().unwrap(), px - 1 - rows.last().unwrap());
-            assert!(top.abs_diff(bottom) <= 1, "{text}@{px}: top {top} bottom {bottom}");
-            assert!(cols.len() as u32 >= px - 4, "{text}@{px}: only {} columns used", cols.len());
+    fn digits_match_the_taskbar_text_and_fit() {
+        for px in [16u32, 20, 24, 32] {
+            let target = tray_digit_height(px) as u32;
+            let mk = |text: &str| TrayLook { kind: Kind::Percent, text: text.into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, px };
+            // One and two digits: the taskbar text height (±1 px of anti-aliasing), centred.
+            for text in ["5", "14", "78", "88"] {
+                let (rows, cols) = ink(&render_number(&mk(text)));
+                let height = rows.last().unwrap() - rows.first().unwrap() + 1;
+                assert!(height.abs_diff(target) <= 1, "{text}@{px}: {height} vs {target}");
+                let (top, bottom) = (*rows.first().unwrap(), px - 1 - rows.last().unwrap());
+                assert!(top.abs_diff(bottom) <= 1, "{text}@{px}: top {top} bottom {bottom}");
+                assert!(*cols.first().unwrap() > 0 && *cols.last().unwrap() < px - 1, "{text}@{px} touches the edge");
+            }
+            // Three digits: never clipped, never bigger than two, and still readable.
+            for text in ["100", "228", "253"] {
+                let (rows, cols) = ink(&render_number(&mk(text)));
+                let height = rows.last().unwrap() - rows.first().unwrap() + 1;
+                assert!(height <= target + 1 && height * 100 >= target * 68, "{text}@{px}: {height} vs {target}");
+                assert!(cols.len() as u32 >= px * 3 / 4, "{text}@{px}: only {} columns used", cols.len());
+            }
         }
     }
 
-    /// Dumps the tray icons for a visual check: SB_ICON_DIR=/tmp/icons cargo test -- --ignored dump_icons
+    #[test]
+    fn fit_digits_tightens_before_shrinking() {
+        let font = FontRef::try_from_slice(FONT).unwrap();
+        let full = px_for_digit_height(&font, 9.0);
+        // Two digits fit as they are.
+        assert_eq!(fit_digits(&font, "78", 9.0, 16.0), (full, 0.0));
+        // Three digits: spacing first (never more than 9% per gap), then size.
+        let (px, tr) = fit_digits(&font, "100", 9.0, 16.0);
+        assert!(tr <= 0.0 && tr >= -0.09 * px - 1e-4);
+        assert!(px <= full);
+        assert!(text_width(&font, "100", px, tr) <= 16.0 + 1e-3);
+    }
+
     #[test]
     #[ignore]
     fn dump_icons() {

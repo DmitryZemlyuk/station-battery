@@ -78,7 +78,7 @@ the release for the version in `Cargo.toml`, and keeps only the three newest rel
   [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (Windows, MIT)
   and [Ionicons](https://ionic.io/ionicons) (macOS, MIT).
 - Tray icons are drawn at runtime from vectors at the exact pixel size of the tray.
-  Digits use a subset of [Barlow Condensed](https://github.com/jpt/barlow) Bold
-  (SIL OFL, `src-tauri/assets/OFL-Barlow.txt`).
+  Digits use a subset of [Inter](https://github.com/rsms/inter) SemiBold
+  (SIL OFL, `src-tauri/assets/OFL-Inter.txt`), sized like the taskbar / menu bar text.
 
 Not affiliated with EcoFlow.
