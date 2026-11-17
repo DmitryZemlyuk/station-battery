@@ -49,6 +49,20 @@ Windows 10). SmartScreen may warn because the file is unsigned: *More info → R
 `~/Applications`). The app is unsigned, so open it the first time with right-click →
 *Open*, or run `xattr -cr "Station Battery.app"`. Allow Bluetooth access when asked.
 
+**Updating without the SmartScreen / Gatekeeper prompt:** with Node.js 18+ installed, run
+[`tools/update.mjs`](tools/update.mjs) (save it anywhere, e.g. next to the app):
+
+```sh
+node update.mjs            # Windows: installs/updates StationBattery.exe in the script's folder
+node update.mjs ~/Applications   # macOS (this is also the default there)
+```
+
+Files downloaded by Node don't carry the "downloaded from the internet" mark, so the new
+version starts without the prompt. The script closes the running app, replaces it and
+starts it again; it does nothing if the latest version is already installed (`--force`
+reinstalls, `--dry-run` only shows what it would do, `--no-start` doesn't start the app).
+On Windows the file is always called `StationBattery.exe`, so autostart keeps working.
+
 Autostart is enabled from the app settings (Windows: `HKCU\...\Run`, macOS: a user
 LaunchAgent) – no admin rights needed.
 
