@@ -299,7 +299,7 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
     let state = app.state::<AppState>();
     let settings = state.core.settings();
     let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-    let look = tray::look(snap, settings.low_threshold, tray::tray_px(scale), &settings.tray_style, &settings.tray_digit_size);
+    let look = tray::look(snap, settings.low_threshold, tray::tray_px(scale), &settings.tray_style, &settings.tray_digit_size, &settings.tray_lost);
     // The unit sits next to the number on macOS, so a language change redraws it too.
     let unit = if snap.lang == "en" { "V" } else { "B" };
     let mut last = state.last_look.lock().unwrap();
@@ -313,6 +313,8 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
                 tray::Kind::Voltage => tray::render_voltage_template(&look.text, unit, look.size),
                 tray::Kind::Percent => tray::render_battery_template(Some(&look.text), look.fill, look.charging, look.size),
             };
+            // Last level kept while there is no connection: greyed out.
+            let icon = if look.tone == tray::Tone::Dim && look.fill.is_some() { tray::faded(icon, 0.45) } else { icon };
             let _ = tray_icon.set_icon(Some(icon));
             let _ = tray_icon.set_icon_as_template(true);
         } else if settings.tray_style == "battery" && look.kind == tray::Kind::Percent {
@@ -336,7 +338,9 @@ fn apply_tray<R: Runtime>(app: &AppHandle<R>, tray_icon: &TrayIcon<R>, snap: &Sn
 async fn change_loop(app: AppHandle) {
     let core = app.state::<AppState>().core.clone();
     let mut last: Option<Snapshot> = None;
-    let mut periodic = tokio::time::interval(Duration::from_secs(30));
+    // Often enough that a lost connection shows up in the tray within seconds of the
+    // 45 s timeout; cheap, since the tray is only redrawn when its look changes.
+    let mut periodic = tokio::time::interval(Duration::from_secs(5));
     loop {
         tokio::select! {
             _ = core.changed.notified() => {
@@ -413,7 +417,7 @@ fn main() {
 
             let snap = core.snapshot();
             let scale = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
-            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale), "number", &core.settings().tray_digit_size);
+            let look = tray::look(&snap, core.settings().low_threshold, tray::tray_px(scale), "number", &core.settings().tray_digit_size, "dash");
             let icon = if cfg!(target_os = "macos") {
                 tray::render_battery_template(None, None, false, "m")
             } else if core.settings().tray_style == "battery" {

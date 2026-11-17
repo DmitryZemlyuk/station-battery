@@ -42,7 +42,8 @@
       parts.push(`${L.remainingIn} ${SB.fmtMinutes(s.minutes)}`);
     }
     m.status = s.stale ? L.stale : parts.join(mac ? " – " : " · ");
-    m.ago = has && !s.stale ? SB.fmtAgo(s.updatedAt) : "";
+    // Still shown while there is no connection: tells how old the last level is.
+    m.ago = has ? SB.fmtAgo(s.updatedAt) : "";
 
     m.source = s.source === "ble"
       ? `${L.viaBle}${!mac && s.rssi != null ? ` · ${String(s.rssi).replace("-", "−")} dBm` : ""}`

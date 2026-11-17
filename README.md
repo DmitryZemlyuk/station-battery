@@ -10,6 +10,10 @@ EcoFlow portable power station. No installer and no admin rights required.
   output power, grid and output voltage, time to full / empty, battery health and cycle
   count. Works from anywhere. The tray item can show the grid voltage instead of the
   charge level.
+- **Connection loss is visible:** when the station goes quiet (switched off, out of
+  Bluetooth range, offline in the cloud) the tray shows "–" instead of a stale level, or,
+  if you prefer, keeps the last level greyed out. The popup says "no connection" and how
+  old the last reading is.
 
 Each platform gets its native look:
 

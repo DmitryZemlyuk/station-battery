@@ -24,6 +24,8 @@ pub struct Settings {
     pub tray_style: String,
     /// Size of the digits in the tray / menu bar: "s" | "m" (like the system text) | "l" | "xl"
     pub tray_digit_size: String,
+    /// When the station can't be reached: "dash" (show "–") | "dim" (last level, greyed)
+    pub tray_lost: String,
     /// Last station picked automatically (keeps the cloud working when it leaves BLE range).
     pub last_seen_sn: String,
 }
@@ -43,6 +45,7 @@ impl Default for Settings {
             autostart: false,
             tray_style: "number".into(),
             tray_digit_size: "m".into(),
+            tray_lost: "dash".into(),
             last_seen_sn: String::new(),
         }
     }
@@ -58,6 +61,9 @@ impl Settings {
         }
         if !["number", "battery", "voltage"].contains(&self.tray_style.as_str()) {
             self.tray_style = "number".into();
+        }
+        if !["dash", "dim"].contains(&self.tray_lost.as_str()) {
+            self.tray_lost = "dash".into();
         }
         if !["s", "m", "l", "xl"].contains(&self.tray_digit_size.as_str()) {
             self.tray_digit_size = "m".into();

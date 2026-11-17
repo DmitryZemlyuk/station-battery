@@ -10,8 +10,14 @@ use tokio::sync::Notify;
 
 /// A BLE reading is used for this long after the last advert.
 pub const BLE_FRESH_MS: u64 = 3 * 60 * 1000;
-/// The popup marks the value as outdated after this.
-pub const STALE_MS: u64 = 5 * 60 * 1000;
+/// The connection counts as lost when the station's adverts stop for this long. It
+/// advertises every second or two, so this is a long silence, not a missed packet.
+pub const BLE_LIVE_MS: u64 = 45 * 1000;
+/// Cloud data counts as live while the cloud reports the station online and the last
+/// update is this recent (the app polls every minute).
+pub const CLOUD_LIVE_MS: u64 = 3 * 60 * 1000;
+/// The last known level is still shown (as "no connection") for this long.
+pub const KEEP_MS: u64 = 12 * 60 * 60 * 1000;
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -281,14 +287,17 @@ impl Core {
             ..Default::default()
         };
 
-        let mut ble_reading: Option<(u8, u64)> = None;
+        // A reading is (level, time it was received, live?). "Live" means the station is
+        // reachable right now; otherwise the value is the last one known.
+        let age = |t: u64| now.saturating_sub(t);
+        let mut ble_reading: Option<(u8, u64, bool)> = None;
         {
             let ble = self.ble.lock().unwrap();
             snap.ble_status = if settings.ble_enabled { ble.status.clone() } else { "off".into() };
             let mut list: Vec<DeviceItem> = ble
                 .devices
                 .iter()
-                .filter(|(_, d)| now.saturating_sub(d.last) < BLE_FRESH_MS)
+                .filter(|(_, d)| age(d.last) < BLE_FRESH_MS)
                 .map(|(sn, d)| DeviceItem {
                     sn: sn.clone(),
                     model: models::name(sn),
@@ -300,26 +309,28 @@ impl Core {
             snap.devices = list;
             if settings.ble_enabled {
                 if let Some(d) = ble.devices.get(&sn) {
-                    if now.saturating_sub(d.last) < BLE_FRESH_MS {
+                    if age(d.last) < BLE_LIVE_MS {
                         snap.rssi = d.rssi;
                     }
                     if let Some(soc) = d.soc {
-                        if now.saturating_sub(d.soc_at) < BLE_FRESH_MS {
-                            ble_reading = Some((soc, d.soc_at));
+                        if age(d.soc_at) < KEEP_MS {
+                            ble_reading = Some((soc, d.soc_at, age(d.soc_at) < BLE_LIVE_MS));
                         }
                     }
                 }
             }
         }
 
+        let mut cloud_reading: Option<(u8, u64, bool)> = None;
         {
             let cloud = self.cloud.lock().unwrap();
             snap.cloud_status = if settings.cloud_enabled { cloud.status.clone() } else { "off".into() };
             snap.cloud_message = cloud.message.clone();
             if settings.cloud_enabled && cloud.sn == sn && !sn.is_empty() && cloud.last > 0 {
                 let v = cloud_values(&cloud.params);
-                let cloud_fresh = now.saturating_sub(cloud.last) < STALE_MS * 2;
-                if cloud_fresh {
+                let live = cloud.status == "online" && age(cloud.last) < CLOUD_LIVE_MS;
+                if live {
+                    // Power, voltage and time only mean something while they are current.
                     snap.watts_in = v.watts_in;
                     snap.watts_out = v.watts_out;
                     snap.minutes = v.minutes;
@@ -330,25 +341,31 @@ impl Core {
                 // Slow-moving facts about the battery stay valid without live data.
                 snap.soh = v.soh;
                 snap.cycles = v.cycles;
-                if let Some(soc) = v.soc {
-                    let newer_than_ble = ble_reading.map(|(_, t)| cloud.last > t).unwrap_or(true);
-                    if newer_than_ble {
-                        snap.soc = Some(soc);
-                        snap.source = "cloud".into();
-                        snap.updated_at = cloud.last;
-                    }
+                if let Some(soc) = v.soc.filter(|_| age(cloud.last) < KEEP_MS) {
+                    cloud_reading = Some((soc, cloud.last, live));
                 }
             }
         }
 
-        if snap.source.is_empty() {
-            if let Some((soc, t)) = ble_reading {
-                snap.soc = Some(soc);
-                snap.source = "ble".into();
-                snap.updated_at = t;
+        // A live reading beats a stale one; between two of the same kind, the newer wins.
+        let pick = match (ble_reading, cloud_reading) {
+            (Some(b), Some(c)) => {
+                if (c.2, c.1) > (b.2, b.1) {
+                    Some((c, "cloud"))
+                } else {
+                    Some((b, "ble"))
+                }
             }
+            (Some(b), None) => Some((b, "ble")),
+            (None, Some(c)) => Some((c, "cloud")),
+            (None, None) => None,
+        };
+        if let Some(((soc, at, live), source)) = pick {
+            snap.soc = Some(soc);
+            snap.source = source.into();
+            snap.updated_at = at;
+            snap.stale = !live;
         }
-        snap.stale = snap.soc.is_some() && now.saturating_sub(snap.updated_at) > STALE_MS;
         snap
     }
 }
@@ -448,13 +465,60 @@ mod selection_tests {
     }
 
     #[test]
-    fn ble_reading_expires() {
+    fn ble_link_is_lost_after_silence_but_the_last_level_stays() {
         let c = core();
         see(&c, "R621AAAAAAAAAAAA", -60, Some(78), 1000);
         let s = c.snapshot();
-        assert_eq!((s.soc, s.source.as_str()), (Some(78), "ble"));
-        see(&c, "R621AAAAAAAAAAAA", -60, Some(78), BLE_FRESH_MS + 1000);
+        assert_eq!((s.soc, s.source.as_str(), s.stale, s.rssi), (Some(78), "ble", false, Some(-60)));
+        // Station switched off: 45 s without adverts = no connection, last level kept.
+        see(&c, "R621AAAAAAAAAAAA", -60, Some(78), BLE_LIVE_MS + 1000);
+        let s = c.snapshot();
+        assert_eq!((s.soc, s.stale, s.rssi), (Some(78), true, None));
+        // Much later it is forgotten.
+        see(&c, "R621AAAAAAAAAAAA", -60, Some(78), KEEP_MS + 1000);
         assert_eq!(c.snapshot().soc, None);
+        let _ = std::fs::remove_file(&c.settings_path);
+    }
+
+    fn with_cloud(c: &Shared, status: &str, age_ms: u64, soc: u8) {
+        let mut s = c.settings.write().unwrap();
+        s.cloud_enabled = true;
+        s.device_sn = "R621AAAAAAAAAAAA".into();
+        drop(s);
+        let mut cl = c.cloud.lock().unwrap();
+        cl.sn = "R621AAAAAAAAAAAA".into();
+        cl.status = status.into();
+        cl.last = now_ms() - age_ms;
+        cl.params.insert("pd.soc".into(), serde_json::json!(soc));
+        cl.params.insert("pd.wattsInSum".into(), serde_json::json!(300));
+        cl.params.insert("pd.wattsOutSum".into(), serde_json::json!(20));
+        cl.params.insert("inv.acInVol".into(), serde_json::json!(230000));
+    }
+
+    #[test]
+    fn cloud_offline_is_no_connection() {
+        let c = core();
+        with_cloud(&c, "online", 5_000, 64);
+        let s = c.snapshot();
+        assert_eq!((s.soc, s.source.as_str(), s.stale, s.watts_in, s.volts_in), (Some(64), "cloud", false, Some(300), Some(230)));
+        // The cloud says the station went offline: no connection, no live power data.
+        with_cloud(&c, "offline", 5_000, 64);
+        let s = c.snapshot();
+        assert_eq!((s.soc, s.stale, s.watts_in, s.volts_in, s.charging), (Some(64), true, None, None, None));
+        // Online but silent for too long: also lost.
+        with_cloud(&c, "online", CLOUD_LIVE_MS + 1000, 64);
+        assert!(c.snapshot().stale);
+        let _ = std::fs::remove_file(&c.settings_path);
+    }
+
+    #[test]
+    fn a_live_source_beats_a_newer_stale_one() {
+        let c = core();
+        // Cloud offline but its last value is newer than the live Bluetooth one.
+        with_cloud(&c, "offline", 1_000, 50);
+        see(&c, "R621AAAAAAAAAAAA", -60, Some(77), 3_000);
+        let s = c.snapshot();
+        assert_eq!((s.soc, s.source.as_str(), s.stale), (Some(77), "ble", false));
         let _ = std::fs::remove_file(&c.settings_path);
     }
 }

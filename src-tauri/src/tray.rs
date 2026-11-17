@@ -78,7 +78,9 @@ pub fn size_factor(size: &str) -> f32 {
     }
 }
 
-pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str, size: &str) -> TrayLook {
+/// `lost` is the `tray_lost` setting: what to show when the station can't be reached.
+/// "dash" (the default) shows "–"; "dim" keeps the last level, greyed out.
+pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str, size: &str, lost: &str) -> TrayLook {
     let size = digit_size(size);
     let light_bar = system_uses_light_theme();
     let charging = s.charging == Some(true);
@@ -113,8 +115,8 @@ pub fn look(s: &Snapshot, low_threshold: u8, px: u32, style: &str, size: &str) -
             size,
             px,
         },
-        Some(soc) => TrayLook { kind: Kind::Percent, text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, size, px },
-        None => TrayLook { kind: Kind::Percent, text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, size, px },
+        Some(soc) if lost == "dim" => TrayLook { kind: Kind::Percent, text: soc.to_string(), tone: Tone::Dim, fill: Some(soc), charging: false, light_bar, size, px },
+        _ => TrayLook { kind: Kind::Percent, text: "–".into(), tone: Tone::Dim, fill: None, charging: false, light_bar, size, px },
     }
 }
 
@@ -342,13 +344,20 @@ pub fn render_battery_color(l: &TrayLook) -> Image<'static> {
         _ => hex(color(l)),
     };
     let opacity = if l.tone == Tone::Dim { 0.55 } else { 1.0 };
+    // No connection: the whole glyph is greyed out, with a dash instead of a level.
+    let line = if l.tone == Tone::Dim { 0.55 } else { 1.0 };
+    let dash = if l.fill.is_none() {
+        format!(r#"<path d="M5.5 8h3" stroke="{outline}" stroke-opacity="{line}" stroke-width="1.5" stroke-linecap="round"/>"#)
+    } else {
+        String::new()
+    };
     let level = l.fill.map(|v| v.min(100) as f32);
     let w = level.map(|v| if v > 0.0 { (10.0 * v / 100.0).max(1.0) } else { 0.0 }).unwrap_or(0.0);
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
-<rect x="0.5" y="4.5" width="13" height="7" rx="2" fill="none" stroke="{outline}" stroke-width="1"/>
-<path d="M14.5 6.5v3" stroke="{outline}" stroke-width="1" stroke-linecap="round" fill="none"/>
-<rect x="2" y="6" width="{w}" height="4" rx="0.8" fill="{fill}" fill-opacity="{opacity}"/>"#
+<rect x="0.5" y="4.5" width="13" height="7" rx="2" fill="none" stroke="{outline}" stroke-opacity="{line}" stroke-width="1"/>
+<path d="M14.5 6.5v3" stroke="{outline}" stroke-opacity="{line}" stroke-width="1" stroke-linecap="round" fill="none"/>
+<rect x="2" y="6" width="{w}" height="4" rx="0.8" fill="{fill}" fill-opacity="{opacity}"/>{dash}"#
     );
     if l.charging {
         // Knock the bolt's surroundings out of the fill, then draw it in the outline colour.
@@ -391,7 +400,10 @@ pub fn render_battery_template(text: Option<&str>, fill: Option<u8>, charging: b
             r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {H}" width="{w}" height="{H}">
 <rect x="{x}" y="{y}" width="{bw}" height="{h}" rx="9.5" fill="none" stroke="black" stroke-opacity="0.6" stroke-width="3"/>
 <rect x="{cap_x}" y="20.5" width="4.5" height="13" rx="2.2" fill="black" fill-opacity="0.6"/>
+<path d="M{dx0} 27h{dw}" stroke="black" stroke-opacity="0.6" stroke-width="3.5" stroke-linecap="round"/>
 </svg>"#,
+            dx0 = bx + body_w / 2.0 - 7.0,
+            dw = 14.0,
             x = bx + 1.5,
             y = by + 1.5,
             bw = body_w - 3.0,
@@ -471,11 +483,23 @@ pub fn render_voltage_template(text: &str, unit: &str, size: &str) -> Image<'sta
     Image::new_owned(buf, w, H)
 }
 
+/// The same image at reduced opacity (macOS "no connection" with the last level kept:
+/// a template image has no colour, so it is greyed out by its alpha).
+pub fn faded(img: Image<'static>, opacity: f32) -> Image<'static> {
+    let (w, h) = (img.width(), img.height());
+    let mut buf = img.rgba().to_vec();
+    for a in buf.iter_mut().skip(3).step_by(4) {
+        *a = (*a as f32 * opacity).round() as u8;
+    }
+    Image::new_owned(buf, w, h)
+}
+
 pub fn tooltip(s: &Snapshot, lang: &str) -> String {
     let t = i18n::get(lang);
     let name = if s.model.is_empty() { "EcoFlow".to_string() } else { s.model.clone() };
     match s.soc {
         None => format!("{name} – {}", t.no_data),
+        Some(soc) if s.stale => format!("{name} – {}\n{soc}% ({})", t.lost, t.last_known),
         Some(soc) => {
             let mut out = format!("{name} – {soc}%");
             if s.charging == Some(true) {
@@ -856,19 +880,41 @@ mod tests {
     }
 
     #[test]
+    fn lost_connection_shows_a_dash_or_the_dimmed_last_level() {
+        let lost = Snapshot { soc: Some(99), stale: true, ..Default::default() };
+        let l = look(&lost, 20, 16, "number", "m", "dash");
+        assert_eq!((l.text.as_str(), l.tone, l.fill), ("–", Tone::Dim, None));
+        let l = look(&lost, 20, 16, "number", "m", "dim");
+        assert_eq!((l.text.as_str(), l.tone, l.fill), ("99", Tone::Dim, Some(99)));
+        // Unknown setting values behave like the default.
+        assert_eq!(look(&lost, 20, 16, "number", "m", "?").text, "–");
+        // Voltage mode: no live voltage when lost, so the same rule applies.
+        let l = look(&Snapshot { soc: Some(99), stale: true, volts_in: None, ..Default::default() }, 20, 16, "voltage", "m", "dash");
+        assert_eq!((l.kind, l.text.as_str()), (Kind::Percent, "–"));
+        // Connected: the level as usual.
+        assert_eq!(look(&Snapshot { soc: Some(99), ..Default::default() }, 20, 16, "number", "m", "dash").text, "99");
+        // macOS dimming keeps the shape and halves the alpha.
+        let t = render_battery_template(Some("99"), Some(99), false, "m");
+        let f = faded(render_battery_template(Some("99"), Some(99), false, "m"), 0.5);
+        let max = |img: &Image| img.rgba().chunks(4).map(|p| p[3]).max().unwrap();
+        assert_eq!((f.width(), f.height()), (t.width(), t.height()));
+        assert!(max(&f) <= max(&t) / 2 + 1);
+    }
+
+    #[test]
     fn voltage_style_shows_volts_and_falls_back_to_percent() {
-        let l = look(&snap(Some(78), Some(228)), 20, 16, "voltage", "m");
+        let l = look(&snap(Some(78), Some(228)), 20, 16, "voltage", "m", "dash");
         assert_eq!((l.kind, l.text.as_str(), l.tone), (Kind::Voltage, "228", Tone::Normal));
         // No grid, or far out of range: flagged.
-        assert_eq!(look(&snap(Some(78), Some(0)), 20, 16, "voltage", "m").tone, Tone::Low);
-        assert_eq!(look(&snap(Some(78), Some(262)), 20, 16, "voltage", "m").tone, Tone::Low);
-        assert_eq!(look(&snap(Some(78), Some(205)), 20, 16, "voltage", "m").tone, Tone::Normal);
+        assert_eq!(look(&snap(Some(78), Some(0)), 20, 16, "voltage", "m", "dash").tone, Tone::Low);
+        assert_eq!(look(&snap(Some(78), Some(262)), 20, 16, "voltage", "m", "dash").tone, Tone::Low);
+        assert_eq!(look(&snap(Some(78), Some(205)), 20, 16, "voltage", "m", "dash").tone, Tone::Normal);
         // No reading (cloud off): the percentage instead of a blank item.
-        let l = look(&snap(Some(78), None), 20, 16, "voltage", "m");
+        let l = look(&snap(Some(78), None), 20, 16, "voltage", "m", "dash");
         assert_eq!((l.kind, l.text.as_str()), (Kind::Percent, "78"));
         // Other styles never show volts.
-        assert_eq!(look(&snap(Some(78), Some(228)), 20, 16, "number", "m").kind, Kind::Percent);
-        assert_eq!(look(&snap(None, None), 20, 16, "voltage", "m").text, "–");
+        assert_eq!(look(&snap(Some(78), Some(228)), 20, 16, "number", "m", "dash").kind, Kind::Percent);
+        assert_eq!(look(&snap(None, None), 20, 16, "voltage", "m", "dash").text, "–");
     }
 
     fn ink(img: &Image) -> (Vec<u32>, Vec<u32>) {
@@ -948,6 +994,7 @@ mod tests {
                     ("100", Tone::Charging, Some(100), true),
                     ("5", Tone::Charging, Some(5), true),
                     ("–", Tone::Dim, None, false),
+                    ("99", Tone::Dim, Some(99), false),
                 ] {
                     let l = TrayLook { kind: Kind::Percent, text: text.into(), tone, fill, charging, light_bar, size: "m", px };
                     for (kind, img) in [("num", render_number(&l)), ("bat", render_battery_color(&l))] {
@@ -958,6 +1005,13 @@ mod tests {
                     n += 1;
                 }
             }
+        }
+        for (j, img) in [
+            render_battery_template(Some("99"), Some(99), false, "m"),
+            faded(render_battery_template(Some("99"), Some(99), false, "m"), 0.45),
+            render_battery_template(Some("–"), None, false, "m"),
+        ].into_iter().enumerate() {
+            std::fs::write(format!("{dir}/mac-lost-{j}-{}x{}.rgba", img.width(), img.height()), img.rgba()).unwrap();
         }
         for px in [16u32, 24] {
             for (j, (v, tone)) in [("228", Tone::Normal), ("0", Tone::Low), ("253", Tone::Normal)].iter().enumerate() {
