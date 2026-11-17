@@ -26,6 +26,34 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// A station that is just waking up reports 0% for a moment (over Bluetooth and in the
+/// cloud) before its battery controller has a reading. A 0 right after a higher or
+/// unknown level is held back until it has persisted for `ZERO_HOLD_MS`; a 0 that follows
+/// a nearly empty battery is taken at once.
+pub const ZERO_HOLD_MS: u64 = 20 * 1000;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ZeroGuard {
+    since: u64,
+}
+
+impl ZeroGuard {
+    /// `prev` is the last level still considered current (None if unknown or too old).
+    pub fn accept(&mut self, prev: Option<u8>, new: u8, now: u64) -> bool {
+        if new != 0 || prev.is_some_and(|p| p <= 5) {
+            self.since = 0;
+            return true;
+        }
+        if self.since == 0 {
+            self.since = now.max(1);
+        }
+        now.saturating_sub(self.since) >= ZERO_HOLD_MS
+    }
+}
+
+/// Parameter keys that carry the state of charge.
+pub const SOC_KEYS: [&str; 4] = ["pd.soc", "bms_bmsStatus.soc", "bmsMaster.soc", "bms_bmsStatus.f32ShowSoc"];
+
 #[derive(Clone, Debug)]
 pub struct BleSeen {
     pub soc: Option<u8>,
@@ -33,6 +61,7 @@ pub struct BleSeen {
     pub last: u64,
     /// Last time `soc` was received (adverts without soc don't refresh it).
     pub soc_at: u64,
+    pub zero: ZeroGuard,
 }
 
 #[derive(Default)]
@@ -50,6 +79,7 @@ pub struct CloudState {
     pub sn: String,
     pub params: HashMap<String, Value>,
     pub last: u64,
+    pub zero: ZeroGuard,
 }
 
 #[derive(Default)]
@@ -147,7 +177,7 @@ pub struct CloudValues {
 }
 
 pub fn cloud_values(p: &HashMap<String, Value>) -> CloudValues {
-    let soc = num(p, &["pd.soc", "bms_bmsStatus.soc", "bmsMaster.soc", "bms_bmsStatus.f32ShowSoc"])
+    let soc = num(p, &SOC_KEYS)
         .filter(|v| (0.0..=100.0).contains(v))
         .map(|v| v.round() as u8);
     let watts_in = num(p, &["pd.wattsInSum", "inv.inputWatts"]).map(|v| v.round() as i64);
@@ -432,7 +462,7 @@ mod selection_tests {
 
     fn see(core: &Shared, sn: &str, rssi: i16, soc: Option<u8>, age_ms: u64) {
         let t = now_ms() - age_ms;
-        core.ble.lock().unwrap().devices.insert(sn.into(), BleSeen { soc, rssi: Some(rssi), last: t, soc_at: t });
+        core.ble.lock().unwrap().devices.insert(sn.into(), BleSeen { soc, rssi: Some(rssi), last: t, soc_at: t, zero: ZeroGuard::default() });
     }
 
     #[test]
@@ -478,6 +508,23 @@ mod selection_tests {
         see(&c, "R621AAAAAAAAAAAA", -60, Some(78), KEEP_MS + 1000);
         assert_eq!(c.snapshot().soc, None);
         let _ = std::fs::remove_file(&c.settings_path);
+    }
+
+    #[test]
+    fn a_waking_station_s_zero_is_held_back() {
+        let mut g = ZeroGuard::default();
+        // Unknown or high level before: a 0 waits.
+        assert!(!g.accept(None, 0, 1_000));
+        assert!(!g.accept(None, 0, 1_000 + ZERO_HOLD_MS - 1));
+        // ...unless it persists.
+        assert!(g.accept(None, 0, 1_000 + ZERO_HOLD_MS));
+        // A real reading resets it.
+        let mut g = ZeroGuard::default();
+        assert!(!g.accept(Some(99), 0, 5_000));
+        assert!(g.accept(Some(99), 98, 6_000));
+        assert!(!g.accept(Some(98), 0, 7_000));
+        // A nearly empty battery reaching 0 is believed at once.
+        assert!(ZeroGuard::default().accept(Some(3), 0, 1_000));
     }
 
     fn with_cloud(c: &Shared, status: &str, age_ms: u64, soc: u8) {

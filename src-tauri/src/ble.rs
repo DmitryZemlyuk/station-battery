@@ -1,6 +1,6 @@
 //! Passive BLE scanner: reads the EcoFlow advertisement (no pairing, no connection).
 
-use crate::core::{now_ms, BleSeen, Shared, BLE_FRESH_MS};
+use crate::core::{now_ms, BleSeen, Shared, ZeroGuard, BLE_FRESH_MS, BLE_LIVE_MS};
 use crate::models::{parse_advert, MANUFACTURER_ID};
 use btleplug::api::{Central, CentralEvent, CentralState, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager, PeripheralId};
@@ -96,7 +96,7 @@ fn handle(core: &Shared, data: &[u8], rssi: Option<i16>) {
         let mut ble = core.ble.lock().unwrap();
         let entry = ble.devices.entry(adv.serial.clone()).or_insert_with(|| {
             changed = true;
-            BleSeen { soc: None, rssi: None, last: 0, soc_at: 0 }
+            BleSeen { soc: None, rssi: None, last: 0, soc_at: 0, zero: ZeroGuard::default() }
         });
         if now.saturating_sub(entry.last) > BLE_FRESH_MS {
             changed = true; // came back after being gone
@@ -105,7 +105,8 @@ fn handle(core: &Shared, data: &[u8], rssi: Option<i16>) {
         if rssi.is_some() {
             entry.rssi = rssi;
         }
-        if let Some(soc) = adv.soc {
+        let prev = entry.soc.filter(|_| now.saturating_sub(entry.soc_at) < BLE_LIVE_MS);
+        if let Some(soc) = adv.soc.filter(|&v| entry.zero.accept(prev, v, now)) {
             if entry.soc != Some(soc) || now.saturating_sub(entry.soc_at) > 60_000 {
                 changed = true;
             }

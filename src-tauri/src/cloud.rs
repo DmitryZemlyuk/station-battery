@@ -2,7 +2,7 @@
 //! POST /auth/login -> GET /iot-auth/app/certification -> MQTT over TLS.
 //! Telemetry is JSON for River 2 / Delta 2 and older models.
 
-use crate::core::{now_ms, Shared};
+use crate::core::{cloud_values, now_ms, CloudState, Shared, CLOUD_LIVE_MS, SOC_KEYS};
 use crate::models;
 use crate::settings;
 use base64::Engine;
@@ -127,6 +127,26 @@ fn quota_request() -> Vec<u8> {
     .into_bytes()
 }
 
+/// Add incoming values. A 0% level from a station that is just waking up is held back
+/// (see `ZeroGuard`); the other values still apply.
+fn merge(c: &mut CloudState, values: &serde_json::Map<String, Value>) {
+    let now = now_ms();
+    let prev = cloud_values(&c.params).soc.filter(|_| now.saturating_sub(c.last) < CLOUD_LIVE_MS);
+    let new = SOC_KEYS.iter().find_map(|k| values.get(*k).and_then(|v| v.as_f64()));
+    let hold = match new {
+        Some(v) if v.round() as i64 == 0 => !c.zero.accept(prev, 0, now),
+        Some(v) => !c.zero.accept(prev, v.round().clamp(0.0, 100.0) as u8, now),
+        None => false,
+    };
+    for (k, val) in values {
+        if hold && SOC_KEYS.contains(&k.as_str()) {
+            continue;
+        }
+        c.params.insert(k.clone(), val.clone());
+    }
+    c.last = now;
+}
+
 /// Merge an incoming message into the parameter map. Returns `Some(online)` when
 /// the message tells whether the station is connected to the cloud.
 fn apply_message(core: &Shared, sn: &str, data_topic: &str, payload: &[u8], topic: &str) -> Option<bool> {
@@ -140,10 +160,7 @@ fn apply_message(core: &Shared, sn: &str, data_topic: &str, payload: &[u8], topi
         if params.is_empty() {
             return None;
         }
-        for (k, val) in params {
-            c.params.insert(k.clone(), val.clone());
-        }
-        c.last = now_ms();
+        merge(&mut c, params);
         return Some(true);
     }
     // get_reply
@@ -157,10 +174,7 @@ fn apply_message(core: &Shared, sn: &str, data_topic: &str, payload: &[u8], topi
         };
         if online {
             if let Some(map) = data.get("quotaMap").and_then(|m| m.as_object()) {
-                for (k, val) in map {
-                    c.params.insert(k.clone(), val.clone());
-                }
-                c.last = now_ms();
+                merge(&mut c, map);
             }
         }
         return Some(online);
@@ -333,6 +347,20 @@ mod tests {
         let offline = br#"{"operateType":"latestQuotas","data":{"online":0}}"#;
         drop(c);
         assert_eq!(apply_message(&core, "R621X", "/app/device/property/R621X", offline, "/x"), Some(false));
+    }
+
+    #[test]
+    fn a_waking_station_s_zero_does_not_replace_the_level() {
+        let core = Core::new(Settings::default(), std::env::temp_dir().join("sb-test.json"));
+        core.cloud.lock().unwrap().sn = "R621X".into();
+        let t = "/app/device/property/R621X";
+        // Just connected: the first 0 is held back, other values still arrive.
+        apply_message(&core, "R621X", t, br#"{"params":{"pd.soc":0,"pd.wattsInSum":0}}"#, t);
+        assert_eq!(cloud_values(&core.cloud.lock().unwrap().params).soc, None);
+        assert_eq!(cloud_values(&core.cloud.lock().unwrap().params).watts_in, Some(0));
+        apply_message(&core, "R621X", t, br#"{"params":{"pd.soc":99}}"#, t);
+        apply_message(&core, "R621X", t, br#"{"params":{"pd.soc":0}}"#, t);
+        assert_eq!(cloud_values(&core.cloud.lock().unwrap().params).soc, Some(99));
     }
 
     /// End-to-end against a local mock API + MQTT broker (see tests/mock_cloud.py):
