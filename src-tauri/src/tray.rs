@@ -200,23 +200,51 @@ fn text_width(font: &FontRef, text: &str, px: f32, tracking: f32) -> f32 {
     adv + tracking * n.saturating_sub(1) as f32
 }
 
+/// Where the ink of `text` starts relative to the pen start, and how wide it is: the
+/// advance widths minus the empty side bearings of the first and last character.
+fn ink_span(font: &FontRef, text: &str, px: f32, tracking: f32) -> (f32, f32) {
+    let sf = font.as_scaled(PxScale::from(px));
+    let k = px / font.height_unscaled();
+    let (mut pen, mut left, mut right) = (0.0f32, f32::MAX, f32::MIN);
+    for ch in text.chars() {
+        let id = sf.glyph_id(ch);
+        if let Some(o) = font.outline(id) {
+            left = left.min(pen + o.bounds.min.x * k);
+            right = right.max(pen + o.bounds.max.x * k);
+        }
+        pen += sf.h_advance(id) + tracking;
+    }
+    if left > right {
+        (0.0, text_width(font, text, px, tracking))
+    } else {
+        (left, right - left)
+    }
+}
+
 /// Size and letter spacing for `text` so the digits are `digit_h` tall and the line
-/// fits in `max_w`: first the spacing is tightened a little, then the size shrinks.
-fn fit_digits(font: &FontRef, text: &str, digit_h: f32, max_w: f32) -> (f32, f32) {
+/// fits in `max_w`. `spacing` is the letter spacing wanted (pixels between characters);
+/// when the line is too wide it is given up first, then tightened a little below zero,
+/// and only then does the size shrink.
+fn fit_digits(font: &FontRef, text: &str, digit_h: f32, max_w: f32, spacing: f32) -> (f32, f32) {
     let mut px = px_for_digit_height(font, digit_h);
     let min_px = px * 0.55;
+    let gaps = text.chars().count().saturating_sub(1) as f32;
     loop {
-        // Up to 9% of the size per gap (about 1 px at tray sizes) of tighter spacing.
+        // Down to 9% of the size per gap (about 1 px at tray sizes) of tighter spacing.
         let min_tracking = -0.09 * px;
-        let natural = text_width(font, text, px, 0.0);
-        let gaps = text.chars().count().saturating_sub(1) as f32;
-        if natural <= max_w {
-            return (px, 0.0);
-        }
-        if gaps > 0.0 {
-            let need = (max_w - natural) / gaps;
-            if need >= min_tracking {
-                return (px, need);
+        // The ink, not the advances: the font's own side bearings are empty space.
+        let natural = ink_span(font, text, px, 0.0).1;
+        if gaps == 0.0 {
+            if natural <= max_w {
+                return (px, 0.0);
+            }
+        } else {
+            let room = (max_w - natural) / gaps;
+            if room >= spacing {
+                return (px, spacing);
+            }
+            if room >= min_tracking {
+                return (px, room);
             }
         }
         if px <= min_px {
@@ -224,6 +252,13 @@ fn fit_digits(font: &FontRef, text: &str, digit_h: f32, max_w: f32) -> (f32, f32
         }
         px -= 0.25;
     }
+}
+
+/// Letter spacing in the Windows tray: about 1 px at 100% (a touch looser than the
+/// font's default, which looks cramped at 9 px), in whole pixels so every digit
+/// lands on the same sub-pixel phase.
+pub fn tray_spacing(px: u32) -> f32 {
+    (px as f32 / 16.0).round().max(1.0)
 }
 
 /// Draws `text` with its digits centred in `w`×`h` (or starting at `x0` when given),
@@ -278,10 +313,11 @@ pub fn render_number(l: &TrayLook) -> Image<'static> {
     // (100%, voltage) get the whole width instead: there it is worth more than the air.
     let target = tray_digit_height(s, l.size);
     let max_w = if l.text.chars().count() >= 3 { sf32 } else { sf32 - 2.0 };
-    let (px, tracking) = fit_digits(&font, &l.text, target, max_w);
-    let total_w = text_width(&font, &l.text, px, tracking);
+    let (px, tracking) = fit_digits(&font, &l.text, target, max_w, tray_spacing(s));
+    // Centre the ink (not the advances) and start it on a whole pixel.
+    let (ink_left, ink_w) = ink_span(&font, &l.text, px, tracking);
     let baseline = centred_baseline(&font, px, 0.0, sf32);
-    let x0 = ((sf32 - total_w) / 2.0).round();
+    let x0 = ((sf32 - ink_w) / 2.0).round() - ink_left;
     draw_digits(&font, &l.text, px, tracking, x0, baseline, (s, s), |x, y, cov| {
         let i = ((y * s + x) * 4) as usize;
         let a = (cov.powf(0.85) * 255.0) as u8;
@@ -872,13 +908,31 @@ mod tests {
     fn fit_digits_tightens_before_shrinking() {
         let font = FontRef::try_from_slice(FONT_REGULAR).unwrap();
         let full = px_for_digit_height(&font, 9.0);
-        // Two digits fit as they are.
-        assert_eq!(fit_digits(&font, "78", 9.0, 16.0), (full, 0.0));
-        // Three digits: spacing first (never more than 9% per gap), then size.
-        let (px, tr) = fit_digits(&font, "100", 9.0, 16.0);
+        // Two digits fit with the wanted spacing; one digit has no gaps to space.
+        assert_eq!(fit_digits(&font, "78", 9.0, 14.0, 1.0), (full, 1.0));
+        assert_eq!(fit_digits(&font, "5", 9.0, 14.0, 1.0), (full, 0.0));
+        // Wider spacing than fits is reduced, the size stays.
+        let (px, tr) = fit_digits(&font, "88", 9.0, 14.0, 4.0);
+        assert_eq!(px, full);
+        assert!(tr < 4.0 && ink_span(&font, "88", px, tr).1 <= 14.0 + 1e-3);
+        // Three digits: spacing first (never more than 9% per gap below zero), then size.
+        let (px, tr) = fit_digits(&font, "100", 9.0, 16.0, 1.0);
         assert!(tr <= 0.0 && tr >= -0.09 * px - 1e-4);
         assert!(px <= full);
-        assert!(text_width(&font, "100", px, tr) <= 16.0 + 1e-3);
+        assert!(ink_span(&font, "100", px, tr).1 <= 16.0 + 1e-3);
+        assert_eq!((tray_spacing(16), tray_spacing(24), tray_spacing(32)), (1.0, 2.0, 2.0));
+    }
+
+    #[test]
+    fn two_digits_are_spaced_out() {
+        // The gap between the two digits of "99" is wider than with the font's default.
+        let mk = |px| TrayLook { kind: Kind::Percent, text: "99".into(), tone: Tone::Normal, fill: None, charging: false, light_bar: false, size: "m", px };
+        let img = render_number(&mk(16));
+        let (_, cols) = ink(&img);
+        let longest_gap = cols.windows(2).map(|w| w[1] - w[0] - 1).max().unwrap_or(0);
+        assert!(longest_gap >= 1, "no visible gap between the digits: {cols:?}");
+        // ...and the pair is still inside the 1 px margin.
+        assert!(cols[0] >= 1 && *cols.last().unwrap() <= 14, "{cols:?}");
     }
 
     #[test]
