@@ -6,6 +6,7 @@
   let tab = "general";
   let snMode = false; // manual serial entry shown
   let cloudDirty = false; // email / region edited but not submitted
+  let passwordDirty = false; // something typed into the password field
   let revealed = false;
 
   // ---------- texts ----------
@@ -36,6 +37,7 @@
     }
     tray.querySelector('option[value="number"]').textContent = SB.isMac() ? L.trayCharge : L.trayNumber;
     $("deviceSelect").dataset.sig = "";
+    renderSignIn();
     renderTab();
   }
 
@@ -105,6 +107,7 @@
       $("region").value = s.cloudRegion;
     }
     $("password").placeholder = sv.hasPassword ? L.passwordSaved : "";
+    renderSignIn();
     $("lowThreshold").value = s.lowThreshold;
     $("thresholdVal").textContent = `${s.lowThreshold}%`;
     $("thresholdRow").classList.toggle("hidden", !s.notifyLow);
@@ -193,13 +196,42 @@
 
   $("bleEnabled").onchange = (e) => save({ bleEnabled: e.target.checked });
   $("cloudEnabled").onchange = (e) => save({ cloudEnabled: e.target.checked });
-  $("email").oninput = () => (cloudDirty = true);
-  $("region").onchange = () => (cloudDirty = true);
+  // Signed in (a password is saved) and nothing edited: the button signs out.
+  // Any edit to the email, password or region turns it back into "Sign in".
+  function signedIn() {
+    return !!(sv && sv.hasPassword && !cloudDirty && !passwordDirty);
+  }
+  function renderSignIn() {
+    const L = t();
+    const b = $("signIn");
+    const out = signedIn();
+    b.textContent = out ? L.signOut : L.signIn;
+    b.classList.toggle("accent", !out);
+  }
+  $("email").oninput = () => {
+    cloudDirty = true;
+    renderSignIn();
+  };
+  $("region").onchange = () => {
+    cloudDirty = true;
+    renderSignIn();
+  };
+  $("password").oninput = () => {
+    passwordDirty = $("password").value !== "";
+    renderSignIn();
+  };
   $("signIn").onclick = async () => {
+    if (signedIn()) {
+      sv = await invoke("sign_out");
+      delete $("cloudStatus").dataset.error;
+      render();
+      return;
+    }
     const pass = $("password").value;
     const ok = await save({ cloudEmail: $("email").value.trim(), cloudRegion: $("region").value }, pass);
     if (ok) {
       cloudDirty = false;
+      passwordDirty = false;
       $("password").value = "";
       render();
     }

@@ -42,9 +42,6 @@ html.win:not(.backdrop) .card {
 }
 .w-icon-btn:hover { background: var(--subtle-hover); }
 .w-icon-btn:active { background: var(--subtle-press); color: var(--text2); }
-/* System flyouts slide in from the taskbar. */
-html.win .card.enter .fly { animation: fly-in 0.25s cubic-bezier(0, 0, 0, 1); }
-@keyframes fly-in { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* ---------- macOS panel ---------- */
 html.mac .card { width: 300px; padding: 10px; }

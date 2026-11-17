@@ -34,6 +34,9 @@ struct AppState {
     anchor: Mutex<Option<tray::Anchor>>,
     /// Last height requested by the popup (logical px); starts at the configured size.
     popup_height: Mutex<f64>,
+    /// A show request waiting for the page to lay itself out: (request id, tray rect).
+    pending_show: Mutex<Option<(u64, Option<Rect>)>>,
+    show_seq: AtomicU64,
 }
 
 #[derive(Serialize)]
@@ -195,15 +198,72 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Asks the page to render fresh data and report its height first, so the window
+/// appears once, at its final size and place: resizing a window that is already on
+/// screen makes the system shadow jump around it. If the page doesn't answer in time
+/// (it should take a few ms), the window is shown anyway.
 fn show_popup<R: Runtime>(app: &AppHandle<R>, rect: Option<Rect>) {
-    let Some(win) = tray::popup(app) else { return };
     let state = app.state::<AppState>();
-    let height = *state.popup_height.lock().unwrap();
-    let anchor = tray::place_popup(&win, rect, height);
+    let id = state.show_seq.fetch_add(1, Ordering::Relaxed) + 1;
+    *state.pending_show.lock().unwrap() = Some((id, rect));
+    let _ = app.emit("popup-prepare", id);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        reveal(&app, id, None);
+    });
+}
+
+/// Shows the popup for show request `id` (once; later calls for the same id do nothing).
+fn reveal<R: Runtime>(app: &AppHandle<R>, id: u64, height: Option<f64>) {
+    let state = app.state::<AppState>();
+    let rect = {
+        let mut pending = state.pending_show.lock().unwrap();
+        match *pending {
+            Some((pid, rect)) if pid == id => {
+                *pending = None;
+                rect
+            }
+            _ => return,
+        }
+    };
+    let Some(win) = tray::popup(app) else { return };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let h = {
+        let mut ph = state.popup_height.lock().unwrap();
+        if let Some(h) = height {
+            *ph = h.clamp(120.0, 640.0);
+        }
+        *ph
+    };
+    let _ = win.set_size(tauri::PhysicalSize::new(
+        (tray::popup_width() * scale).round() as u32,
+        (h * scale).round() as u32,
+    ));
+    let anchor = tray::place_popup(&win, rect, h);
     *state.anchor.lock().unwrap() = anchor;
     let _ = win.show();
     let _ = win.set_focus();
-    let _ = app.emit("popup-shown", ());
+}
+
+/// The page has rendered for show request `id` and measured itself.
+#[tauri::command]
+fn reveal_popup(app: AppHandle, id: u64, height: f64) {
+    reveal(&app, id, Some(height));
+}
+
+/// Forgets the saved EcoFlow password (signs out of the cloud).
+#[tauri::command]
+fn sign_out(app: AppHandle, state: tauri::State<AppState>) -> SettingsView {
+    let core = &state.core;
+    let email = core.settings().cloud_email;
+    settings::delete_password(&email);
+    core.set_has_password(&email, false);
+    core.cloud_restart.notify_one();
+    core.mark_changed();
+    let view = settings_view(&app, core);
+    let _ = app.emit("settings-changed", &view);
+    view
 }
 
 fn toggle_popup<R: Runtime>(app: &AppHandle<R>, rect: Rect) {
@@ -211,6 +271,10 @@ fn toggle_popup<R: Runtime>(app: &AppHandle<R>, rect: Rect) {
     let state = app.state::<AppState>();
     if win.is_visible().unwrap_or(false) {
         let _ = win.hide();
+        return;
+    }
+    // A second click while the first one is still being prepared: nothing to do.
+    if state.pending_show.lock().unwrap().is_some() {
         return;
     }
     // The click that took focus away already hid it: treat as "close".
@@ -312,6 +376,8 @@ fn main() {
             get_snapshot,
             get_settings,
             save_settings,
+            sign_out,
+            reveal_popup,
             set_popup_height,
             hide_popup,
             quit_app
@@ -338,6 +404,8 @@ fn main() {
                 menu_lang: Mutex::new(lang.clone()),
                 anchor: Mutex::new(None),
                 popup_height: Mutex::new(236.0),
+                pending_show: Mutex::new(None),
+                show_seq: AtomicU64::new(0),
             });
 
             let snap = core.snapshot();

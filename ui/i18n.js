@@ -1,5 +1,6 @@
 window.I18N = {
   uk: {
+    signOut: "Вийти з акаунта",
     volts: "В",
     health: "Здоров’я батареї",
     cycles: "Цикли",
@@ -99,6 +100,7 @@ window.I18N = {
     errEmail: "Спершу вкажіть email",
   },
   ru: {
+    signOut: "Выйти из аккаунта",
     volts: "В",
     health: "Здоровье батареи",
     cycles: "Циклы",
@@ -198,6 +200,7 @@ window.I18N = {
     errEmail: "Сначала укажите email",
   },
   en: {
+    signOut: "Sign out",
     volts: "V",
     health: "Battery health",
     cycles: "Cycles",

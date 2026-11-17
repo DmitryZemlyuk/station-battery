@@ -190,16 +190,20 @@
   await SB.initPlatform();
 
   listen("snapshot", (e) => apply(e.payload));
-  listen("popup-shown", async () => {
-    // Start the slide-in right away, then refresh the data.
-    const card = $("card");
-    card.classList.remove("enter");
-    void card.offsetWidth; // restart the animation
-    card.classList.add("enter");
-    resize(true);
+  // The window is about to be shown: render fresh data, measure, and let the backend
+  // show the window at exactly this size (resizing a visible window makes the system
+  // shadow jump). Layout works in a hidden page; only animation frames are paused.
+  listen("popup-prepare", async (e) => {
+    const id = e.payload;
+    let height = Math.ceil($("card").getBoundingClientRect().height);
+    try {
+      apply(await invoke("get_snapshot"));
+      height = Math.ceil($("card").getBoundingClientRect().height);
+      lastHeight = height;
+    } finally {
+      invoke("reveal_popup", { id, height }).catch(() => {});
+    }
     SB.initPlatform(); // picks up a changed Windows accent colour
-    apply(await invoke("get_snapshot"));
-    resize(true);
   });
 
   // While the popup is open, refresh so "updated … ago" stays truthful.
